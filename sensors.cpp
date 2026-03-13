@@ -25,7 +25,10 @@ void ComplementaryFilter::update(const IMUData& imu_data, float dt) {
                  + (1.0f - alpha) * accel_angles.pitch;
 
   // For yaw, we only integrate gyro (no accelerometer information)
-  angles.yaw = angles.yaw + imu_data.gyro_z * dt;
+  angles.yaw += imu_data.gyro_z * dt;
+  // Wrap yaw to [-π, π] to prevent overflow
+  while (angles.yaw > M_PI) angles.yaw -= 2.0f * M_PI;
+  while (angles.yaw < -M_PI) angles.yaw += 2.0f * M_PI;
 }
 
 Angles ComplementaryFilter::getAngles() const {
@@ -48,9 +51,13 @@ Angles ComplementaryFilter::calculateAccelAngles(const IMUData& imu_data) const 
   // Calculate pitch from accelerometer
   // sin(pitch) = -accel_x / g
   // Using atan2 for robustness: tan(pitch) = -accel_x / sqrt(accel_y^2 + accel_z^2)
-  accel_angles.pitch = std::atan2(-imu_data.accel_x,
-                                   std::sqrt(imu_data.accel_y * imu_data.accel_y +
-                                             imu_data.accel_z * imu_data.accel_z));
+  float az_magnitude = std::sqrt(imu_data.accel_y * imu_data.accel_y +
+                                 imu_data.accel_z * imu_data.accel_z);
+  if (az_magnitude < 0.1f) {  // Near-zero check for safety
+    accel_angles.pitch = 0.0f;
+  } else {
+    accel_angles.pitch = std::atan2(-imu_data.accel_x, az_magnitude);
+  }
 
   // Yaw cannot be calculated from accelerometer alone
   accel_angles.yaw = 0.0f;
