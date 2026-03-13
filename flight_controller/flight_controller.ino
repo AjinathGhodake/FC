@@ -16,6 +16,7 @@
 #include "../rc_input.h"
 #include "../pid_controller.h"
 #include "../motor_mixer.h"
+#include "../pwm_output.h"
 
 // ============================================================================
 // Configuration
@@ -46,9 +47,14 @@ AttitudePIDController attitude_pid;  // Cascaded attitude controller
 RatePIDController rate_pid;          // Inner rate controller
 AltitudeController altitude_ctrl;    // Altitude hold controller
 MotorMixer motor_mixer;              // X-frame motor mixing
+PWMController pwm_output;            // PWM output to ESCs
 
 unsigned long last_loop_time = 0;
 float loop_dt = LOOP_TIME_S;
+
+// Arm/disarm state
+static bool armed = false;           // Arm/disarm flag
+static unsigned long disarm_timeout = 0;  // Timeout counter for disarm detection
 
 // Altitude hold state
 static float hover_altitude = 0.0f;  // Locked altitude when in alt-hold mode (meters)
@@ -74,13 +80,16 @@ struct {
 void setup_imu();
 void setup_led();
 void setup_rc_receiver();
+void setup_pwm_output();
 void read_mpu6050();
 void read_bmp280();
 void update_filter();
 void update_rc_receiver();
+void update_arm_disarm_logic();
 void update_attitude_controller();
 void update_altitude_controller();
 void update_motor_mixer();
+void update_pwm_output();
 void print_debug_info();
 void print_rc_info();
 
@@ -97,10 +106,13 @@ void setup() {
   setup_led();
   setup_imu();
   setup_rc_receiver();
+  setup_pwm_output();
 
   Serial.println("Initialization complete.");
   Serial.println("Complementary Filter: 98% gyro + 2% accel");
   Serial.println("RC Receiver (CRSF/ELRS) initialized on UART2");
+  Serial.println("PWM Output (50 Hz) initialized on PA0-PA3 (Motors 1-4)");
+  Serial.println("SAFETY: Arm with RC Mode > 1500 μs, Disarm with Mode < 1500 μs");
 
   last_loop_time = millis();
 }
@@ -128,23 +140,27 @@ void loop() {
   // Update RC receiver
   update_rc_receiver();
 
+  // Get RC channels
+  rc_channels = rc_receiver.getChannels();
+
+  // Update arm/disarm logic (check RC Mode switch)
+  update_arm_disarm_logic();
+
   // Update complementary filter
   update_filter();
 
   // Get current angles (debugging)
   current_angles = filter.getAngles();
 
-  // Get RC channels
-  rc_channels = rc_receiver.getChannels();
+  // Update cascaded attitude and rate controllers (only if armed)
+  if (armed) {
+    update_attitude_controller();
+    update_altitude_controller();
+    update_motor_mixer();
+  }
 
-  // Update cascaded attitude and rate controllers
-  update_attitude_controller();
-
-  // Update altitude hold controller
-  update_altitude_controller();
-
-  // Update motor mixer with control outputs
-  update_motor_mixer();
+  // Update PWM output with motor values (or disarm all if not armed)
+  update_pwm_output();
 
   // Print debug info every 10 loops (1 second at 100 Hz)
   static int loop_counter = 0;
@@ -249,6 +265,14 @@ void setup_rc_receiver() {
   Serial.println("RC Receiver UART2 initialized at 420k baud");
 }
 
+void setup_pwm_output() {
+  // Initialize PWM output controller (Timer 2 on PA0-PA3)
+  pwm_output.begin();
+  delay(100);
+  // Start with all motors disarmed (1000 μs)
+  pwm_output.disarmAll();
+}
+
 // ============================================================================
 // Sensor Reading Functions
 // ============================================================================
@@ -345,6 +369,51 @@ void update_filter() {
 
 void update_rc_receiver() {
   rc_receiver.update();
+}
+
+// ============================================================================
+// Arm/Disarm Logic
+// ============================================================================
+
+void update_arm_disarm_logic() {
+  // Arm/disarm is controlled by RC Mode switch (channel 4, RC ch5 in CRSF)
+  // Arm condition: Mode > 1500 μs AND RC signal is connected
+  // Disarm condition: Mode < 1500 μs (immediately)
+  //
+  // Safety: If RC signal is lost, automatically disarm after timeout
+
+  const uint16_t MODE_THRESHOLD = 1500;      // Arm/disarm threshold
+  const unsigned long SIGNAL_LOSS_TIMEOUT = 500;  // ms before automatic disarm
+
+  bool signal_connected = rc_receiver.isConnected();
+  bool mode_armed = (rc_channels.mode > MODE_THRESHOLD);
+
+  // Check for RC signal loss
+  if (!signal_connected) {
+    // Signal lost: automatically disarm
+    if (armed) {
+      armed = false;
+      pwm_output.disarmAll();
+      Serial.println("DISARM: RC signal lost!");
+    }
+    return;
+  }
+
+  // Signal present: check mode switch
+  if (mode_armed && !armed) {
+    // Transition from disarmed to armed
+    armed = true;
+    // Reset integral terms on arm
+    attitude_pid.reset();
+    rate_pid.reset();
+    altitude_ctrl.reset();
+    Serial.println("ARMED: Ready for flight!");
+  } else if (!mode_armed && armed) {
+    // Transition from armed to disarmed
+    armed = false;
+    pwm_output.disarmAll();
+    Serial.println("DISARM: Mode switch down");
+  }
 }
 
 // ============================================================================
@@ -472,7 +541,28 @@ void update_motor_mixer() {
   );
 
   // At this point, motor_output.m1-m4 contain PWM values (1000-2000 μs)
-  // These should be fed to ESC PWM output in Task 8
+  // These will be sent to ESCs in update_pwm_output()
+}
+
+// ============================================================================
+// PWM Output Update
+// ============================================================================
+
+void update_pwm_output() {
+  // Send motor outputs to PWM controller
+  // If armed: send motor_output values to ESCs
+  // If disarmed: ESCs are already at 1000 μs (safe state)
+
+  if (armed) {
+    // Write motor output values to PWM controller
+    pwm_output.setAllMotors(
+      motor_output.m1,
+      motor_output.m2,
+      motor_output.m3,
+      motor_output.m4
+    );
+  }
+  // If not armed, PWM is already at 1000 μs from disarmAll()
 }
 
 // ============================================================================
@@ -480,7 +570,9 @@ void update_motor_mixer() {
 // ============================================================================
 
 void print_debug_info() {
-  Serial.print("Roll: ");
+  Serial.print("[");
+  Serial.print(armed ? "ARMED" : "DISARMED");
+  Serial.print("] Roll: ");
   Serial.print(current_angles.roll * 180.0f / M_PI, 2);
   Serial.print("° | Pitch: ");
   Serial.print(current_angles.pitch * 180.0f / M_PI, 2);
@@ -501,14 +593,14 @@ void print_debug_info() {
   Serial.println();
 
   // Motor output (debug)
-  Serial.print("Motors: M1=");
-  Serial.print(motor_output.m1);
+  Serial.print("PWM Output: M1=");
+  Serial.print(pwm_output.getMotor(1));
   Serial.print(" M2=");
-  Serial.print(motor_output.m2);
+  Serial.print(pwm_output.getMotor(2));
   Serial.print(" M3=");
-  Serial.print(motor_output.m3);
+  Serial.print(pwm_output.getMotor(3));
   Serial.print(" M4=");
-  Serial.print(motor_output.m4);
+  Serial.print(pwm_output.getMotor(4));
   Serial.println(" μs");
 }
 
