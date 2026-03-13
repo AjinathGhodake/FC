@@ -6,12 +6,14 @@
  * - BMP280 Barometer
  * - HMC5883L Magnetometer
  * - GPS NEO-6M
+ * - CRSF RC Receiver (ELRS on UART2)
  *
  * Uses complementary filter for sensor fusion (accel + gyro -> roll/pitch/yaw)
  */
 
 #include <Wire.h>
 #include "sensors.h"
+#include "../rc_input.h"
 
 // ============================================================================
 // Configuration
@@ -35,6 +37,9 @@ ComplementaryFilter filter(0.98f);  // 98% gyro, 2% accel
 IMUData imu_data;
 Angles current_angles;
 
+CRSFReceiver rc_receiver;  // CRSF RC receiver
+RCChannels rc_channels;    // Current RC channel values
+
 unsigned long last_loop_time = 0;
 float loop_dt = LOOP_TIME_S;
 
@@ -53,10 +58,13 @@ struct {
 
 void setup_imu();
 void setup_led();
+void setup_rc_receiver();
 void read_mpu6050();
 void read_bmp280();
 void update_filter();
+void update_rc_receiver();
 void print_debug_info();
+void print_rc_info();
 
 // ============================================================================
 // Arduino Setup
@@ -70,9 +78,11 @@ void setup() {
 
   setup_led();
   setup_imu();
+  setup_rc_receiver();
 
   Serial.println("Initialization complete.");
   Serial.println("Complementary Filter: 98% gyro + 2% accel");
+  Serial.println("RC Receiver (CRSF/ELRS) initialized on UART2");
 
   last_loop_time = millis();
 }
@@ -97,16 +107,23 @@ void loop() {
   read_mpu6050();
   read_bmp280();
 
+  // Update RC receiver
+  update_rc_receiver();
+
   // Update complementary filter
   update_filter();
 
   // Get current angles (debugging)
   current_angles = filter.getAngles();
 
+  // Get RC channels
+  rc_channels = rc_receiver.getChannels();
+
   // Print debug info every 10 loops (1 second at 100 Hz)
   static int loop_counter = 0;
   if (++loop_counter >= 10) {
     print_debug_info();
+    print_rc_info();
     loop_counter = 0;
   }
 
@@ -196,6 +213,13 @@ void setup_imu() {
   Wire.endTransmission();
 
   delay(100);
+}
+
+void setup_rc_receiver() {
+  // Initialize CRSF RC receiver on UART2 (PA2/PA3)
+  rc_receiver.begin();
+  delay(100);
+  Serial.println("RC Receiver UART2 initialized at 420k baud");
 }
 
 // ============================================================================
@@ -289,6 +313,14 @@ void update_filter() {
 }
 
 // ============================================================================
+// RC Receiver Update
+// ============================================================================
+
+void update_rc_receiver() {
+  rc_receiver.update();
+}
+
+// ============================================================================
 // Debug Output
 // ============================================================================
 
@@ -302,4 +334,30 @@ void print_debug_info() {
   Serial.print("° | Alt: ");
   Serial.print(filter.getAltitude(), 1);
   Serial.println("m");
+}
+
+// ============================================================================
+// RC Information Output
+// ============================================================================
+
+void print_rc_info() {
+  Serial.print("RC: ");
+
+  if (rc_receiver.isConnected()) {
+    Serial.print("THR=");
+    Serial.print(rc_channels.throttle);
+    Serial.print(" ROLL=");
+    Serial.print(rc_channels.roll);
+    Serial.print(" PITCH=");
+    Serial.print(rc_channels.pitch);
+    Serial.print(" YAW=");
+    Serial.print(rc_channels.yaw);
+    Serial.print(" MODE=");
+    Serial.print(rc_channels.mode);
+    Serial.print(" AUX=");
+    Serial.print(rc_channels.aux);
+    Serial.println(" [OK]");
+  } else {
+    Serial.println("SIGNAL LOST");
+  }
 }
