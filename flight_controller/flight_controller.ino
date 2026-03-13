@@ -13,11 +13,11 @@
 
 #include <Wire.h>
 #include "sensors.h"
-#include "../rc_input.h"
-#include "../pid_controller.h"
-#include "../motor_mixer.h"
-#include "../pwm_output.h"
-#include "../config.h"
+#include "rc_input.h"
+#include "pid_controller.h"
+#include "motor_mixer.h"
+#include "pwm_output.h"
+#include "config.h"
 
 // ============================================================================
 // Configuration
