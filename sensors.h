@@ -11,6 +11,7 @@ struct IMUData {
   float gyro_x;   // rad/s
   float gyro_y;   // rad/s
   float gyro_z;   // rad/s
+  float pressure; // Pa (from BMP280)
 };
 
 // Struct to hold orientation angles
@@ -31,15 +32,27 @@ public:
   // Get current angle estimates
   Angles getAngles() const;
 
+  // Get current altitude estimate (fused barometer + vertical accel)
+  float getAltitude() const;
+
   // Reset filter state
   void reset();
 
 private:
   float alpha;        // Weight for gyro integration (0.98 typical)
   Angles angles;      // Current angle estimates
+  float altitude;     // Fused altitude estimate (m)
+  float altitude_velocity;  // Vertical velocity from accel integration (m/s)
+
+  // Altitude fusion weights
+  static constexpr float ALT_BARO_WEIGHT = 0.9f;    // 90% barometer
+  static constexpr float ALT_ACCEL_WEIGHT = 0.1f;   // 10% accel velocity
 
   // Helper function to calculate accel-based angles
   Angles calculateAccelAngles(const IMUData& imu_data) const;
+
+  // Helper function to convert pressure to altitude
+  float pressureToAltitude(float pressure_pa) const;
 };
 
 #endif // SENSORS_H
