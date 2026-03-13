@@ -167,3 +167,40 @@ void AttitudePIDController::setGains(float kp, float ki, float kd) {
   pitch_pid.setOutputLimits(-max_rate, max_rate);
   yaw_pid.setOutputLimits(-max_rate, max_rate);
 }
+
+// ============================================================================
+// AltitudeController Implementation
+// ============================================================================
+
+// Default gains for altitude control (barometer-based hover)
+// These are initial tuning values; fine-tune based on flight testing
+static constexpr float DEFAULT_KP_ALT = 0.3f;   // Proportional
+static constexpr float DEFAULT_KI_ALT = 0.05f;  // Integral
+static constexpr float DEFAULT_KD_ALT = 0.1f;   // Derivative
+
+AltitudeController::AltitudeController()
+    : pid(DEFAULT_KP_ALT, DEFAULT_KI_ALT, DEFAULT_KD_ALT) {
+  // Set output limits: throttle adjustment from -100 to +100
+  pid.setOutputLimits(-100.0f, 100.0f);
+}
+
+float AltitudeController::update(float desired_altitude, float actual_altitude, float dt) {
+  // The PID controller will output a throttle adjustment
+  // Positive adjustment = increase throttle (go higher)
+  // Negative adjustment = decrease throttle (go lower)
+  return pid.update(desired_altitude, actual_altitude, dt);
+}
+
+void AltitudeController::reset() {
+  pid.reset();
+}
+
+void AltitudeController::setGains(float kp, float ki, float kd) {
+  pid = PIDController(kp, ki, kd);
+  // Restore output limits
+  pid.setOutputLimits(-100.0f, 100.0f);
+}
+
+float AltitudeController::getIntegral() const {
+  return pid.getIntegral();
+}

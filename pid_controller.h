@@ -97,4 +97,27 @@ private:
   PIDController yaw_pid;
 };
 
+// Altitude Controller for barometer-based hover maintenance
+// Controls throttle to maintain a desired altitude based on barometer feedback
+class AltitudeController {
+public:
+  AltitudeController();
+
+  // Update altitude controller with desired vs actual altitude (meters)
+  // Returns throttle adjustment (-100..+100) to be added to base throttle
+  float update(float desired_altitude, float actual_altitude, float dt);
+
+  // Reset integral state
+  void reset();
+
+  // Set PID gains
+  void setGains(float kp, float ki, float kd);
+
+  // Get current integral state (for debugging)
+  float getIntegral() const;
+
+private:
+  PIDController pid;  // Single PID for altitude control
+};
+
 #endif // PID_CONTROLLER_H

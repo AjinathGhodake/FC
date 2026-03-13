@@ -43,9 +43,13 @@ RCChannels rc_channels;    // Current RC channel values
 
 AttitudePIDController attitude_pid;  // Cascaded attitude controller
 RatePIDController rate_pid;          // Inner rate controller
+AltitudeController altitude_ctrl;    // Altitude hold controller
 
 unsigned long last_loop_time = 0;
 float loop_dt = LOOP_TIME_S;
+
+// Altitude hold state
+static float hover_altitude = 0.0f;  // Locked altitude when in alt-hold mode (meters)
 
 // BMP280 calibration data (read from device)
 // These are Bosch compensation coefficients for temperature and pressure
@@ -68,6 +72,7 @@ void read_bmp280();
 void update_filter();
 void update_rc_receiver();
 void update_attitude_controller();
+void update_altitude_controller();
 void print_debug_info();
 void print_rc_info();
 
@@ -126,6 +131,9 @@ void loop() {
 
   // Update cascaded attitude and rate controllers
   update_attitude_controller();
+
+  // Update altitude hold controller
+  update_altitude_controller();
 
   // Print debug info every 10 loops (1 second at 100 Hz)
   static int loop_counter = 0;
@@ -387,6 +395,53 @@ void update_attitude_controller() {
 }
 
 // ============================================================================
+// Altitude Controller Update
+// ============================================================================
+
+void update_altitude_controller() {
+  // Check if throttle is LOW (below 1050 μs) to enable altitude hold
+  // Throttle range: 1000-2000 μs (center/hover at ~1500)
+  // LOW = throttle stick at bottom = alt-hold mode
+
+  const uint16_t ALT_HOLD_THRESHOLD = 1050;  // Throttle threshold for alt-hold
+
+  // If throttle is low, we're in altitude-hold mode
+  if (rc_channels.throttle < ALT_HOLD_THRESHOLD) {
+    // Lock the hover altitude if not already set
+    // This happens on the first frame when throttle goes low
+    if (rc_channels.throttle < ALT_HOLD_THRESHOLD &&
+        rc_channels.throttle > 1000) {  // Valid throttle range
+      // Only lock altitude once, not every frame
+      static bool alt_hold_active = false;
+      if (!alt_hold_active) {
+        hover_altitude = filter.getAltitude();
+        alt_hold_active = true;
+        altitude_ctrl.reset();
+      }
+    }
+
+    // Update altitude controller and get throttle adjustment
+    float actual_altitude = filter.getAltitude();
+    float throttle_adjustment = altitude_ctrl.update(
+      hover_altitude,
+      actual_altitude,
+      loop_dt
+    );
+
+    // In a real implementation, apply throttle_adjustment to the base throttle
+    // For now, this is computed for motor mixing integration (Task 7)
+    // throttle_output = base_throttle + throttle_adjustment
+
+  } else {
+    // Throttle is above threshold: disable altitude hold
+    // Pilot has direct throttle control
+    static bool alt_hold_active = false;
+    alt_hold_active = false;
+    altitude_ctrl.reset();
+  }
+}
+
+// ============================================================================
 // Debug Output
 // ============================================================================
 
@@ -399,7 +454,17 @@ void print_debug_info() {
   Serial.print(current_angles.yaw * 180.0f / M_PI, 2);
   Serial.print("° | Alt: ");
   Serial.print(filter.getAltitude(), 1);
-  Serial.println("m");
+  Serial.print("m");
+
+  // Show altitude hold status
+  if (rc_channels.throttle < 1050) {
+    Serial.print(" | AltHold: ");
+    Serial.print(hover_altitude, 1);
+    Serial.print("m (Int: ");
+    Serial.print(altitude_ctrl.getIntegral(), 3);
+    Serial.print(")");
+  }
+  Serial.println();
 }
 
 // ============================================================================
