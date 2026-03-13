@@ -113,7 +113,7 @@ void setup() {
   Serial.println("Initialization complete.");
   Serial.println("Complementary Filter: 98% gyro + 2% accel");
   Serial.println("RC Receiver (CRSF/ELRS) initialized on UART2");
-  Serial.println("PWM Output (50 Hz) initialized on PA0-PA3 (Motors 1-4)");
+  Serial.println("PWM Output (50 Hz) on PA0,PA1,PB0,PB1 (Motors 1-4)");
   Serial.println("SAFETY: Arm with RC Mode > 1500 μs, Disarm with Mode < 1500 μs");
 
   last_loop_time = millis();

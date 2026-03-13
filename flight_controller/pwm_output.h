@@ -6,11 +6,13 @@
 // ============================================================================
 // PWM Output Controller for ESCs
 // ============================================================================
-// Generates 50 Hz PWM on PA0-PA3 (Motors 1-4)
-// PWM pulse width range: 1000-2000 us (ESC standard)
-// 50 Hz = 20 ms period
+// Motor pins (PA2/PA3 reserved for UART2/ELRS):
+//   Motor 1 (FL): PA0 - TIM2_CH1
+//   Motor 2 (FR): PA1 - TIM2_CH2
+//   Motor 3 (RR): PB0 - TIM3_CH3
+//   Motor 4 (RL): PB1 - TIM3_CH4
 //
-// Uses Arduino STM32 HardwareTimer API for TIM2 (PA0-PA3, channels 1-4)
+// PWM: 50 Hz (20 ms period), 1000-2000 us pulse width
 
 class PWMController {
 public:
