@@ -17,6 +17,7 @@
 #include "../pid_controller.h"
 #include "../motor_mixer.h"
 #include "../pwm_output.h"
+#include "../config.h"
 
 // ============================================================================
 // Configuration
@@ -81,6 +82,7 @@ void setup_imu();
 void setup_led();
 void setup_rc_receiver();
 void setup_pwm_output();
+void setup_pid_controllers();
 void read_mpu6050();
 void read_bmp280();
 void update_filter();
@@ -90,8 +92,7 @@ void update_attitude_controller();
 void update_altitude_controller();
 void update_motor_mixer();
 void update_pwm_output();
-void print_debug_info();
-void print_rc_info();
+void print_bench_test_log();
 
 // ============================================================================
 // Arduino Setup
@@ -107,6 +108,7 @@ void setup() {
   setup_imu();
   setup_rc_receiver();
   setup_pwm_output();
+  setup_pid_controllers();
 
   Serial.println("Initialization complete.");
   Serial.println("Complementary Filter: 98% gyro + 2% accel");
@@ -162,11 +164,10 @@ void loop() {
   // Update PWM output with motor values (or disarm all if not armed)
   update_pwm_output();
 
-  // Print debug info every 10 loops (1 second at 100 Hz)
+  // Print debug info at configurable interval
   static int loop_counter = 0;
-  if (++loop_counter >= 10) {
-    print_debug_info();
-    print_rc_info();
+  if (++loop_counter >= DEBUG_LOG_INTERVAL) {
+    print_bench_test_log();
     loop_counter = 0;
   }
 
@@ -271,6 +272,44 @@ void setup_pwm_output() {
   delay(100);
   // Start with all motors disarmed (1000 μs)
   pwm_output.disarmAll();
+}
+
+void setup_pid_controllers() {
+  // Initialize PID controller gains from config.h
+
+  // Rate PID Controller (inner loop - gyro stabilization)
+  rate_pid.setGains(
+    RATE_PID_KP, RATE_PID_KI, RATE_PID_KD,  // Roll/Pitch gains
+    RATE_PID_KP, RATE_PID_KI, RATE_PID_KD   // Yaw gains
+  );
+
+  // Attitude PID Controller (outer loop - angle control)
+  attitude_pid.setGains(ATT_PID_KP, ATT_PID_KI, ATT_PID_KD);
+
+  // Altitude Controller
+  altitude_ctrl.setGains(ALT_PID_KP, ALT_PID_KI, ALT_PID_KD);
+
+  Serial.println("PID Gains Loaded:");
+  Serial.print("  Rate PID: Kp=");
+  Serial.print(RATE_PID_KP);
+  Serial.print(" Ki=");
+  Serial.print(RATE_PID_KI);
+  Serial.print(" Kd=");
+  Serial.println(RATE_PID_KD);
+
+  Serial.print("  Attitude PID: Kp=");
+  Serial.print(ATT_PID_KP);
+  Serial.print(" Ki=");
+  Serial.print(ATT_PID_KI);
+  Serial.print(" Kd=");
+  Serial.println(ATT_PID_KD);
+
+  Serial.print("  Altitude PID: Kp=");
+  Serial.print(ALT_PID_KP);
+  Serial.print(" Ki=");
+  Serial.print(ALT_PID_KI);
+  Serial.print(" Kd=");
+  Serial.println(ALT_PID_KD);
 }
 
 // ============================================================================
@@ -566,66 +605,69 @@ void update_pwm_output() {
 }
 
 // ============================================================================
-// Debug Output
+// Bench Test Logging
 // ============================================================================
+// Comprehensive debug logging for bench testing and PID tuning
+// Format: "T:1234 | Att: R=0.5 P=1.2 Y=-0.3 | RC: Th=1500 | Motors: 1500 1500 1500 1500"
 
-void print_debug_info() {
-  Serial.print("[");
-  Serial.print(armed ? "ARMED" : "DISARMED");
-  Serial.print("] Roll: ");
-  Serial.print(current_angles.roll * 180.0f / M_PI, 2);
-  Serial.print("° | Pitch: ");
-  Serial.print(current_angles.pitch * 180.0f / M_PI, 2);
-  Serial.print("° | Yaw: ");
-  Serial.print(current_angles.yaw * 180.0f / M_PI, 2);
-  Serial.print("° | Alt: ");
+void print_bench_test_log() {
+  // Get current time in milliseconds (for correlation with logs)
+  unsigned long current_ms = millis();
+
+  // Print timestamp
+  Serial.print("T:");
+  Serial.print(current_ms);
+
+  // Print arm status
+  Serial.print(" | [");
+  Serial.print(armed ? "ARMED" : "DISARM");
+  Serial.print("] ");
+
+  // Print attitude angles in degrees
+  Serial.print("Att: R=");
+  Serial.print(current_angles.roll * 180.0f / M_PI, 1);
+  Serial.print(" P=");
+  Serial.print(current_angles.pitch * 180.0f / M_PI, 1);
+  Serial.print(" Y=");
+  Serial.print(current_angles.yaw * 180.0f / M_PI, 1);
+
+  // Print RC inputs
+  Serial.print(" | RC: Th=");
+  Serial.print(rc_channels.throttle);
+  Serial.print(" Ro=");
+  Serial.print(rc_channels.roll);
+  Serial.print(" Pi=");
+  Serial.print(rc_channels.pitch);
+  Serial.print(" Ya=");
+  Serial.print(rc_channels.yaw);
+
+  // Show RC signal status
+  if (!rc_receiver.isConnected()) {
+    Serial.print(" [NO_SIGNAL]");
+  }
+
+  // Print motor outputs
+  Serial.print(" | Motors: ");
+  Serial.print(pwm_output.getMotor(1));
+  Serial.print(" ");
+  Serial.print(pwm_output.getMotor(2));
+  Serial.print(" ");
+  Serial.print(pwm_output.getMotor(3));
+  Serial.print(" ");
+  Serial.print(pwm_output.getMotor(4));
+
+  // Print altitude info
+  Serial.print(" | Alt: ");
   Serial.print(filter.getAltitude(), 1);
   Serial.print("m");
 
-  // Show altitude hold status
-  if (rc_channels.throttle < 1050) {
-    Serial.print(" | AltHold: ");
-    Serial.print(hover_altitude, 1);
-    Serial.print("m (Int: ");
-    Serial.print(altitude_ctrl.getIntegral(), 3);
-    Serial.print(")");
-  }
+  // Print rate corrections (from rate PID)
+  Serial.print(" | Rate: R=");
+  Serial.print(rate_output.roll, 3);
+  Serial.print(" P=");
+  Serial.print(rate_output.pitch, 3);
+  Serial.print(" Y=");
+  Serial.print(rate_output.yaw, 3);
+
   Serial.println();
-
-  // Motor output (debug)
-  Serial.print("PWM Output: M1=");
-  Serial.print(pwm_output.getMotor(1));
-  Serial.print(" M2=");
-  Serial.print(pwm_output.getMotor(2));
-  Serial.print(" M3=");
-  Serial.print(pwm_output.getMotor(3));
-  Serial.print(" M4=");
-  Serial.print(pwm_output.getMotor(4));
-  Serial.println(" μs");
-}
-
-// ============================================================================
-// RC Information Output
-// ============================================================================
-
-void print_rc_info() {
-  Serial.print("RC: ");
-
-  if (rc_receiver.isConnected()) {
-    Serial.print("THR=");
-    Serial.print(rc_channels.throttle);
-    Serial.print(" ROLL=");
-    Serial.print(rc_channels.roll);
-    Serial.print(" PITCH=");
-    Serial.print(rc_channels.pitch);
-    Serial.print(" YAW=");
-    Serial.print(rc_channels.yaw);
-    Serial.print(" MODE=");
-    Serial.print(rc_channels.mode);
-    Serial.print(" AUX=");
-    Serial.print(rc_channels.aux);
-    Serial.println(" [OK]");
-  } else {
-    Serial.println("SIGNAL LOST");
-  }
 }
