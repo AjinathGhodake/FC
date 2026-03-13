@@ -15,6 +15,7 @@
 #include "sensors.h"
 #include "../rc_input.h"
 #include "../pid_controller.h"
+#include "../motor_mixer.h"
 
 // ============================================================================
 // Configuration
@@ -44,12 +45,18 @@ RCChannels rc_channels;    // Current RC channel values
 AttitudePIDController attitude_pid;  // Cascaded attitude controller
 RatePIDController rate_pid;          // Inner rate controller
 AltitudeController altitude_ctrl;    // Altitude hold controller
+MotorMixer motor_mixer;              // X-frame motor mixing
 
 unsigned long last_loop_time = 0;
 float loop_dt = LOOP_TIME_S;
 
 // Altitude hold state
 static float hover_altitude = 0.0f;  // Locked altitude when in alt-hold mode (meters)
+static float throttle_adjustment = 0.0f;  // Altitude trim (from altitude controller)
+
+// Motor control state
+static RatePIDController::RateCorrection rate_output = {0.0f, 0.0f, 0.0f};  // Rate PID outputs
+static MotorOutput motor_output = {1500, 1500, 1500, 1500};  // Current motor PWM values
 
 // BMP280 calibration data (read from device)
 // These are Bosch compensation coefficients for temperature and pressure
@@ -73,6 +80,7 @@ void update_filter();
 void update_rc_receiver();
 void update_attitude_controller();
 void update_altitude_controller();
+void update_motor_mixer();
 void print_debug_info();
 void print_rc_info();
 
@@ -134,6 +142,9 @@ void loop() {
 
   // Update altitude hold controller
   update_altitude_controller();
+
+  // Update motor mixer with control outputs
+  update_motor_mixer();
 
   // Print debug info every 10 loops (1 second at 100 Hz)
   static int loop_counter = 0;
@@ -379,7 +390,7 @@ void update_attitude_controller() {
   float actual_yaw_rate = imu_data.gyro_z;
 
   // Update rate PID controller with desired vs actual rates
-  RatePIDController::RateCorrection rate_output = rate_pid.update(
+  rate_output = rate_pid.update(
     attitude_output.roll_rate, actual_roll_rate,
     attitude_output.pitch_rate, actual_pitch_rate,
     attitude_output.yaw_rate, actual_yaw_rate,
@@ -387,11 +398,7 @@ void update_attitude_controller() {
   );
 
   // At this point, rate_output contains corrections for each axis
-  // In a future phase, these will be converted to motor PWM commands via motor mixing
-  // For now, we're just computing the control signals in the control loop
-
-  // Debug: the rate corrections could be logged or used for motor mixing
-  // (Motor mixing implementation is Task 7)
+  // These are fed to motor mixing in update_motor_mixer() for ESC control
 }
 
 // ============================================================================
@@ -422,15 +429,14 @@ void update_altitude_controller() {
 
     // Update altitude controller and get throttle adjustment
     float actual_altitude = filter.getAltitude();
-    float throttle_adjustment = altitude_ctrl.update(
+    throttle_adjustment = altitude_ctrl.update(
       hover_altitude,
       actual_altitude,
       loop_dt
     );
 
-    // In a real implementation, apply throttle_adjustment to the base throttle
-    // For now, this is computed for motor mixing integration (Task 7)
-    // throttle_output = base_throttle + throttle_adjustment
+    // throttle_adjustment ranges from -100 to +100
+    // This will be applied to the throttle in motor_mixer
 
   } else {
     // Throttle is above threshold: disable altitude hold
@@ -439,6 +445,34 @@ void update_altitude_controller() {
     alt_hold_active = false;
     altitude_ctrl.reset();
   }
+}
+
+// ============================================================================
+// Motor Mixer Update
+// ============================================================================
+
+void update_motor_mixer() {
+  // Convert RC throttle (1000-2000 μs) to 0-100%
+  // 1000 μs = 0% (no thrust)
+  // 1500 μs = 50% (hover)
+  // 2000 μs = 100% (max thrust)
+  float throttle_percent = (rc_channels.throttle - 1000.0f) / 10.0f;
+  throttle_percent = constrain(throttle_percent, 0.0f, 100.0f);
+
+  // Mix motors with:
+  // - throttle: from RC stick
+  // - roll/pitch/yaw: from rate PID corrections (in -100..+100 range)
+  // - altitude_trim: from altitude controller
+  motor_output = motor_mixer.mix(
+    throttle_percent,
+    rate_output.roll * 100.0f / 3.0f,      // Convert rad/s to -100..+100 (-3 rad/s = -100)
+    rate_output.pitch * 100.0f / 3.0f,     // Convert rad/s to -100..+100 (-3 rad/s = -100)
+    rate_output.yaw * 100.0f / 3.0f,       // Convert rad/s to -100..+100 (-3 rad/s = -100)
+    throttle_adjustment
+  );
+
+  // At this point, motor_output.m1-m4 contain PWM values (1000-2000 μs)
+  // These should be fed to ESC PWM output in Task 8
 }
 
 // ============================================================================
@@ -465,6 +499,17 @@ void print_debug_info() {
     Serial.print(")");
   }
   Serial.println();
+
+  // Motor output (debug)
+  Serial.print("Motors: M1=");
+  Serial.print(motor_output.m1);
+  Serial.print(" M2=");
+  Serial.print(motor_output.m2);
+  Serial.print(" M3=");
+  Serial.print(motor_output.m3);
+  Serial.print(" M4=");
+  Serial.print(motor_output.m4);
+  Serial.println(" μs");
 }
 
 // ============================================================================
