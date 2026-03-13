@@ -114,3 +114,56 @@ void RatePIDController::setGains(float kp_rp, float ki_rp, float kd_rp,
   pitch_pid.setOutputLimits(-100.0f, 100.0f);
   yaw_pid.setOutputLimits(-100.0f, 100.0f);
 }
+
+// ============================================================================
+// AttitudePIDController Implementation
+// ============================================================================
+
+// Default gains for attitude control (convert angle error to rate setpoint)
+// Higher gains make the drone respond faster to attitude commands
+static constexpr float DEFAULT_KP_ATTITUDE = 4.5f;    // Proportional
+static constexpr float DEFAULT_KI_ATTITUDE = 0.05f;   // Integral (small to avoid windup)
+static constexpr float DEFAULT_KD_ATTITUDE = 0.15f;   // Derivative (smooth response)
+
+AttitudePIDController::AttitudePIDController()
+    : roll_pid(DEFAULT_KP_ATTITUDE, DEFAULT_KI_ATTITUDE, DEFAULT_KD_ATTITUDE),
+      pitch_pid(DEFAULT_KP_ATTITUDE, DEFAULT_KI_ATTITUDE, DEFAULT_KD_ATTITUDE),
+      yaw_pid(DEFAULT_KP_ATTITUDE, DEFAULT_KI_ATTITUDE, DEFAULT_KD_ATTITUDE) {
+  // Set output limits for angular rate (rad/s)
+  // Typical max rate for a drone: ~3 rad/s (170 deg/s)
+  float max_rate = 3.0f;  // rad/s
+  roll_pid.setOutputLimits(-max_rate, max_rate);
+  pitch_pid.setOutputLimits(-max_rate, max_rate);
+  yaw_pid.setOutputLimits(-max_rate, max_rate);
+}
+
+AttitudePIDController::Output AttitudePIDController::update(
+    float roll_des, float pitch_des, float yaw_des,
+    float roll_act, float pitch_act, float yaw_act, float dt) {
+
+  Output output;
+  output.roll_rate = roll_pid.update(roll_des, roll_act, dt);
+  output.pitch_rate = pitch_pid.update(pitch_des, pitch_act, dt);
+  output.yaw_rate = yaw_pid.update(yaw_des, yaw_act, dt);
+
+  return output;
+}
+
+void AttitudePIDController::reset() {
+  roll_pid.reset();
+  pitch_pid.reset();
+  yaw_pid.reset();
+}
+
+void AttitudePIDController::setGains(float kp, float ki, float kd) {
+  // Create new PID controllers with the specified gains
+  roll_pid = PIDController(kp, ki, kd);
+  pitch_pid = PIDController(kp, ki, kd);
+  yaw_pid = PIDController(kp, ki, kd);
+
+  // Restore output limits
+  float max_rate = 3.0f;  // rad/s
+  roll_pid.setOutputLimits(-max_rate, max_rate);
+  pitch_pid.setOutputLimits(-max_rate, max_rate);
+  yaw_pid.setOutputLimits(-max_rate, max_rate);
+}

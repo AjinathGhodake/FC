@@ -14,6 +14,7 @@
 #include <Wire.h>
 #include "sensors.h"
 #include "../rc_input.h"
+#include "../pid_controller.h"
 
 // ============================================================================
 // Configuration
@@ -40,6 +41,9 @@ Angles current_angles;
 CRSFReceiver rc_receiver;  // CRSF RC receiver
 RCChannels rc_channels;    // Current RC channel values
 
+AttitudePIDController attitude_pid;  // Cascaded attitude controller
+RatePIDController rate_pid;          // Inner rate controller
+
 unsigned long last_loop_time = 0;
 float loop_dt = LOOP_TIME_S;
 
@@ -63,6 +67,7 @@ void read_mpu6050();
 void read_bmp280();
 void update_filter();
 void update_rc_receiver();
+void update_attitude_controller();
 void print_debug_info();
 void print_rc_info();
 
@@ -118,6 +123,9 @@ void loop() {
 
   // Get RC channels
   rc_channels = rc_receiver.getChannels();
+
+  // Update cascaded attitude and rate controllers
+  update_attitude_controller();
 
   // Print debug info every 10 loops (1 second at 100 Hz)
   static int loop_counter = 0;
@@ -318,6 +326,64 @@ void update_filter() {
 
 void update_rc_receiver() {
   rc_receiver.update();
+}
+
+// ============================================================================
+// Attitude Controller Update
+// ============================================================================
+
+void update_attitude_controller() {
+  // Map RC stick inputs to desired attitude angles
+  // RC channels are 1000-2000 μs (center = 1500)
+  // Scale to ±45 degrees (±0.785 radians) for roll/pitch
+  // Scale to ±180 degrees (±π radians) for yaw rate
+
+  // Roll: (rc_roll - 1500) / 10.0 = ±50 degrees max
+  // Pitch: (rc_pitch - 1500) / 10.0 = ±50 degrees max
+  // Yaw: (rc_yaw - 1500) / 10.0 = ±50 degrees max (converted to rate)
+
+  const float RC_MAX_ANGLE = 50.0f * M_PI / 180.0f;  // 50 degrees to radians
+  const float RC_SCALE = RC_MAX_ANGLE / 500.0f;      // Normalize from ±500 (rc - 1500)
+
+  float roll_desired = (rc_channels.roll - 1500.0f) * RC_SCALE;
+  float pitch_desired = (rc_channels.pitch - 1500.0f) * RC_SCALE;
+  float yaw_desired = (rc_channels.yaw - 1500.0f) * RC_SCALE;
+
+  // Clamp desired angles to safe limits
+  roll_desired = constrain(roll_desired, -RC_MAX_ANGLE, RC_MAX_ANGLE);
+  pitch_desired = constrain(pitch_desired, -RC_MAX_ANGLE, RC_MAX_ANGLE);
+
+  // Update attitude PID controller
+  // Input: desired angles vs actual angles from complementary filter
+  AttitudePIDController::Output attitude_output = attitude_pid.update(
+    roll_desired, pitch_desired, yaw_desired,
+    current_angles.roll, current_angles.pitch, current_angles.yaw,
+    loop_dt
+  );
+
+  // The attitude controller outputs desired angular rates
+  // Feed these to the rate controller
+  // The rate controller will output correction values for ESC mixing
+
+  // Get actual angular rates from gyro
+  float actual_roll_rate = imu_data.gyro_x;
+  float actual_pitch_rate = imu_data.gyro_y;
+  float actual_yaw_rate = imu_data.gyro_z;
+
+  // Update rate PID controller with desired vs actual rates
+  RatePIDController::RateCorrection rate_output = rate_pid.update(
+    attitude_output.roll_rate, actual_roll_rate,
+    attitude_output.pitch_rate, actual_pitch_rate,
+    attitude_output.yaw_rate, actual_yaw_rate,
+    loop_dt
+  );
+
+  // At this point, rate_output contains corrections for each axis
+  // In a future phase, these will be converted to motor PWM commands via motor mixing
+  // For now, we're just computing the control signals in the control loop
+
+  // Debug: the rate corrections could be logged or used for motor mixing
+  // (Motor mixing implementation is Task 7)
 }
 
 // ============================================================================

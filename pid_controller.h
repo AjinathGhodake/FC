@@ -67,4 +67,34 @@ private:
   PIDController yaw_pid;
 };
 
+// Attitude PID Controller for angle-based stabilization
+// Converts desired attitude angles to desired angular rates for the rate controller
+// Part of cascaded control: attitude -> rate -> motor output
+class AttitudePIDController {
+public:
+  AttitudePIDController();
+
+  // Update attitude with desired vs actual angles (radians)
+  // Returns desired angular rates (rad/s) for feeding to rate controller
+  struct Output {
+    float roll_rate;   // rad/s desired roll rate
+    float pitch_rate;  // rad/s desired pitch rate
+    float yaw_rate;    // rad/s desired yaw rate
+  };
+
+  Output update(float roll_des, float pitch_des, float yaw_des,
+                float roll_act, float pitch_act, float yaw_act, float dt);
+
+  // Reset all controllers
+  void reset();
+
+  // Set gains for all axes (roll, pitch share gains; yaw separate)
+  void setGains(float kp, float ki, float kd);
+
+private:
+  PIDController roll_pid;
+  PIDController pitch_pid;
+  PIDController yaw_pid;
+};
+
 #endif // PID_CONTROLLER_H
