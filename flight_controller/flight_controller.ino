@@ -185,31 +185,61 @@ void setup_led() {
 }
 
 void setup_imu() {
+  Wire.setSDA(PB7);
+  Wire.setSCL(PB6);
   Wire.begin();
-  Wire.setClock(400000);  // 400 kHz I2C clock
+  Wire.setClock(100000);  // 100 kHz I2C clock
 
   // Enable internal pull-ups on I2C pins (PB6, PB7)
-  // STM32F401/F411 I2C requires pull-ups for reliable operation
-  GPIOB->PUPDR &= ~((3 << 12) | (3 << 14));  // Clear PB6/PB7
-  GPIOB->PUPDR |=  ((1 << 12) | (1 << 14));  // Set pull-up (1 = pull-up)
+  GPIOB->PUPDR &= ~((3 << 12) | (3 << 14));
+  GPIOB->PUPDR |=  ((1 << 12) | (1 << 14));
 
   delay(100);
 
-  // Initialize MPU-6050
+  // --- I2C Bus Scan (diagnostic) ---
+  Serial.println("I2C scan:");
+  for (uint8_t addr = 1; addr < 127; addr++) {
+    Wire.beginTransmission(addr);
+    uint8_t err = Wire.endTransmission();
+    if (err == 0) {
+      Serial.print("  Found device at 0x");
+      Serial.println(addr, HEX);
+    }
+  }
+
+  // --- Initialize MPU-6050 ---
+  // Read WHO_AM_I register (should return 0x68)
   Wire.beginTransmission(0x68);
-  Wire.write(0x6B);  // PWR_MGMT_1 register
-  Wire.write(0x00);  // Wake up the MPU6050
-  Wire.endTransmission();
+  Wire.write(0x75);  // WHO_AM_I register
+  uint8_t err = Wire.endTransmission();
+  Serial.print("MPU-6050 WHO_AM_I write: ");
+  Serial.println(err);
+
+  uint8_t who = 0;
+  Wire.requestFrom(0x68, 1);
+  if (Wire.available()) {
+    who = Wire.read();
+  }
+  Serial.print("MPU-6050 WHO_AM_I: 0x");
+  Serial.println(who, HEX);
+
+  // Wake up MPU-6050
+  Wire.beginTransmission(0x68);
+  Wire.write(0x6B);
+  Wire.write(0x00);
+  err = Wire.endTransmission();
+  Serial.print("MPU-6050 wake: ");
+  Serial.println(err);
 
   delay(100);
 
-  // Set gyroscope range to ±250 deg/s (register 0x1B)
+  // Set gyroscope range to ±250 deg/s
   Wire.beginTransmission(0x68);
   Wire.write(0x1B);
   Wire.write(0x00);
   Wire.endTransmission();
 
-  // Set accelerometer range to ±2g (register 0x1C)
+  // Set accelerometer range to ±2g
   Wire.beginTransmission(0x68);
   Wire.write(0x1C);
   Wire.write(0x00);
@@ -217,46 +247,80 @@ void setup_imu() {
 
   delay(100);
 
-  // Initialize BMP280 barometer
+  // --- Initialize BMP280 ---
+  // Check chip ID (should be 0x58)
+  Wire.beginTransmission(BMP280_ADDRESS);
+  Wire.write(0xD0);  // Chip ID register
+  Wire.endTransmission();
+  Wire.requestFrom(BMP280_ADDRESS, 1);
+  uint8_t bmp_id = 0;
+  if (Wire.available()) {
+    bmp_id = Wire.read();
+  }
+  Serial.print("BMP280 chip ID: 0x");
+  Serial.println(bmp_id, HEX);
+
   // Read calibration data from registers 0x88-0xA1
   Wire.beginTransmission(BMP280_ADDRESS);
-  Wire.write(0x88);  // Calibration data start address
+  Wire.write(0x88);
   Wire.endTransmission();
   Wire.requestFrom(BMP280_ADDRESS, 24);
 
   if (Wire.available() >= 24) {
-    // Temperature calibration
-    bmp280_calib.T1 = (Wire.read() | (Wire.read() << 8));
-    bmp280_calib.T2 = Wire.read() | (Wire.read() << 8);
-    bmp280_calib.T3 = Wire.read() | (Wire.read() << 8);
+    // Read calibration as byte pairs (little-endian)
+    uint8_t buf[24];
+    for (int i = 0; i < 24; i++) buf[i] = Wire.read();
 
-    // Pressure calibration
-    bmp280_calib.P1 = (Wire.read() | (Wire.read() << 8));
-    bmp280_calib.P2 = Wire.read() | (Wire.read() << 8);
-    bmp280_calib.P3 = Wire.read() | (Wire.read() << 8);
-    bmp280_calib.P4 = Wire.read() | (Wire.read() << 8);
-    bmp280_calib.P5 = Wire.read() | (Wire.read() << 8);
-    bmp280_calib.P6 = Wire.read() | (Wire.read() << 8);
-    bmp280_calib.P7 = Wire.read() | (Wire.read() << 8);
-    bmp280_calib.P8 = Wire.read() | (Wire.read() << 8);
-    bmp280_calib.P9 = Wire.read() | (Wire.read() << 8);
+    bmp280_calib.T1 = buf[0]  | (buf[1] << 8);
+    bmp280_calib.T2 = buf[2]  | (buf[3] << 8);
+    bmp280_calib.T3 = buf[4]  | (buf[5] << 8);
+    bmp280_calib.P1 = buf[6]  | (buf[7] << 8);
+    bmp280_calib.P2 = buf[8]  | (buf[9] << 8);
+    bmp280_calib.P3 = buf[10] | (buf[11] << 8);
+    bmp280_calib.P4 = buf[12] | (buf[13] << 8);
+    bmp280_calib.P5 = buf[14] | (buf[15] << 8);
+    bmp280_calib.P6 = buf[16] | (buf[17] << 8);
+    bmp280_calib.P7 = buf[18] | (buf[19] << 8);
+    bmp280_calib.P8 = buf[20] | (buf[21] << 8);
+    bmp280_calib.P9 = buf[22] | (buf[23] << 8);
 
     Serial.println("BMP280 calibration data loaded");
+    Serial.print("  T1="); Serial.print(bmp280_calib.T1);
+    Serial.print(" T2="); Serial.print(bmp280_calib.T2);
+    Serial.print(" T3="); Serial.println(bmp280_calib.T3);
+  } else {
+    Serial.print("BMP280 calib FAILED, available=");
+    Serial.println(Wire.available());
   }
 
-  // Configure BMP280: normal mode, oversampling 2x temp, 16x pressure
+  // Configure BMP280: normal mode, osrs_t=2x, osrs_p=16x
   Wire.beginTransmission(BMP280_ADDRESS);
-  Wire.write(0xF4);  // ctrl_meas register
-  Wire.write(0x57);  // osrs_t=2x, osrs_p=16x, mode=normal
+  Wire.write(0xF4);
+  Wire.write(0x57);
   Wire.endTransmission();
 
-  // Set filter coefficient
+  // Filter coefficient 16, standby 1s
   Wire.beginTransmission(BMP280_ADDRESS);
-  Wire.write(0xF5);  // config register
-  Wire.write(0xA0);  // filter=16, standby=1s
+  Wire.write(0xF5);
+  Wire.write(0xA0);
   Wire.endTransmission();
 
   delay(100);
+
+  // --- Test read from MPU-6050 ---
+  Wire.beginTransmission(0x68);
+  Wire.write(0x3B);
+  err = Wire.endTransmission();
+  Serial.print("MPU test read setup: ");
+  Serial.println(err);
+
+  uint8_t n = Wire.requestFrom(0x68, 14);
+  Serial.print("MPU requestFrom returned: ");
+  Serial.println(n);
+  Serial.print("MPU available: ");
+  Serial.println(Wire.available());
+  // Flush any bytes
+  while (Wire.available()) Wire.read();
 }
 
 void setup_rc_receiver() {
@@ -363,34 +427,37 @@ void read_mpu6050() {
 // ============================================================================
 
 void read_bmp280() {
-  // Read pressure and temperature data from BMP280
-  // Registers: 0xF7 (pressure MSB), 0xF8 (pressure LSB), 0xF9 (pressure XLSB)
-  //            0xFA (temperature MSB), 0xFB (temperature LSB), 0xFC (temperature XLSB)
-
   Wire.beginTransmission(BMP280_ADDRESS);
-  Wire.write(0xF7);  // Start at pressure data register
+  Wire.write(0xF7);
   Wire.endTransmission();
 
   Wire.requestFrom(BMP280_ADDRESS, 6);
 
-  int32_t pressure_raw = 0;
-  int32_t temperature_raw = 0;
-
   if (Wire.available() >= 6) {
-    // Read 20-bit pressure value
-    pressure_raw = (Wire.read() << 12) | (Wire.read() << 4) | (Wire.read() >> 4);
+    int32_t pressure_raw = ((int32_t)Wire.read() << 12) | ((int32_t)Wire.read() << 4) | (Wire.read() >> 4);
+    int32_t temperature_raw = ((int32_t)Wire.read() << 12) | ((int32_t)Wire.read() << 4) | (Wire.read() >> 4);
 
-    // Read 20-bit temperature value
-    temperature_raw = (Wire.read() << 12) | (Wire.read() << 4) | (Wire.read() >> 4);
+    // Bosch compensation for temperature
+    int32_t var1 = ((((temperature_raw >> 3) - ((int32_t)bmp280_calib.T1 << 1))) * ((int32_t)bmp280_calib.T2)) >> 11;
+    int32_t var2 = (((((temperature_raw >> 4) - ((int32_t)bmp280_calib.T1)) * ((temperature_raw >> 4) - ((int32_t)bmp280_calib.T1))) >> 12) * ((int32_t)bmp280_calib.T3)) >> 14;
+    int32_t t_fine = var1 + var2;
 
-    // Apply Bosch compensation formulas (simplified)
-    // Full implementation would use integer math with lookup tables
-    // For now, store raw pressure directly (complementary filter will use it)
+    // Bosch compensation for pressure
+    int64_t var1_p = ((int64_t)t_fine) - 128000;
+    int64_t var2_p = var1_p * var1_p * (int64_t)bmp280_calib.P6;
+    var2_p = var2_p + ((var1_p * (int64_t)bmp280_calib.P5) << 17);
+    var2_p = var2_p + (((int64_t)bmp280_calib.P4) << 35);
+    var1_p = ((var1_p * var1_p * (int64_t)bmp280_calib.P3) >> 8) + ((var1_p * (int64_t)bmp280_calib.P2) << 12);
+    var1_p = (((((int64_t)1) << 47) + var1_p)) * ((int64_t)bmp280_calib.P1) >> 33;
 
-    imu_data.pressure = (float)pressure_raw;
-  } else {
-    // If read fails, use previous value or zero
-    imu_data.pressure = 101325.0f;  // Sea level fallback
+    if (var1_p != 0) {
+      int64_t p = 1048576 - pressure_raw;
+      p = (((p << 31) - var2_p) * 3125) / var1_p;
+      var1_p = (((int64_t)bmp280_calib.P9) * (p >> 13) * (p >> 13)) >> 25;
+      var2_p = (((int64_t)bmp280_calib.P8) * p) >> 19;
+      p = ((p + var1_p + var2_p) >> 8) + (((int64_t)bmp280_calib.P7) << 4);
+      imu_data.pressure = (float)p / 256.0f;  // Pressure in Pa
+    }
   }
 }
 
