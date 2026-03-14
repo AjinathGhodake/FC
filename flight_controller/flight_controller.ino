@@ -41,6 +41,8 @@ ComplementaryFilter filter(0.98f);  // 98% gyro, 2% accel
 IMUData imu_data;
 Angles current_angles;
 
+uint8_t mpu_addr = 0x68;  // MPU-6050 address (0x68 if AD0=GND, 0x69 if AD0=VCC)
+
 CRSFReceiver rc_receiver;  // CRSF RC receiver
 RCChannels rc_channels;    // Current RC channel values
 
@@ -100,7 +102,10 @@ void print_bench_test_log();
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);  // Wait for serial to stabilize
+  // Wait up to 5 seconds for serial monitor to open, then proceed anyway
+  unsigned long t0 = millis();
+  while (!Serial && (millis() - t0) < 5000) { delay(10); }
+  delay(200);
 
   Serial.println("Flight Controller Starting...");
 
@@ -188,86 +193,107 @@ void setup_imu() {
   Wire.setSDA(PB7);
   Wire.setSCL(PB6);
   Wire.begin();
-  Wire.setClock(100000);  // 100 kHz I2C clock
+  Wire.setClock(100000);
 
-  // Enable internal pull-ups on I2C pins (PB6, PB7)
+  // Enable internal pull-ups on PB6/PB7
   GPIOB->PUPDR &= ~((3 << 12) | (3 << 14));
   GPIOB->PUPDR |=  ((1 << 12) | (1 << 14));
 
   delay(100);
 
-  // --- I2C Bus Scan (diagnostic) ---
+  // --- I2C Bus Scan ---
   Serial.println("I2C scan:");
+  bool found_any = false;
   for (uint8_t addr = 1; addr < 127; addr++) {
     Wire.beginTransmission(addr);
-    uint8_t err = Wire.endTransmission();
-    if (err == 0) {
-      Serial.print("  Found device at 0x");
+    if (Wire.endTransmission() == 0) {
+      Serial.print("  Device at 0x");
       Serial.println(addr, HEX);
+      found_any = true;
+    }
+  }
+  if (!found_any) Serial.println("  No I2C devices found!");
+
+  // --- Detect MPU-6050 address (0x68 or 0x69) ---
+  // AD0=GND → 0x68, AD0=VCC → 0x69
+  mpu_addr = 0;
+  for (uint8_t try_addr : {0x68, 0x69}) {
+    Wire.beginTransmission(try_addr);
+    if (Wire.endTransmission() == 0) {
+      mpu_addr = try_addr;
+      Serial.print("MPU-6050 found at 0x");
+      Serial.println(try_addr, HEX);
+      break;
     }
   }
 
-  // --- Initialize MPU-6050 ---
-  // Read WHO_AM_I register (should return 0x68)
-  Wire.beginTransmission(0x68);
-  Wire.write(0x75);  // WHO_AM_I register
-  uint8_t err = Wire.endTransmission();
-  Serial.print("MPU-6050 WHO_AM_I write: ");
-  Serial.println(err);
+  if (mpu_addr == 0) {
+    Serial.println("ERROR: MPU-6050 NOT found at 0x68 or 0x69!");
+    Serial.println("Check wiring: SDA->PB7, SCL->PB6, VCC->3.3V, GND->GND");
+    mpu_addr = 0x68;  // Fall back so code doesn't crash
+  } else {
+    // Read WHO_AM_I (should be 0x68)
+    Wire.beginTransmission(mpu_addr);
+    Wire.write(0x75);
+    Wire.endTransmission(false);
+    Wire.requestFrom(mpu_addr, (uint8_t)1);
+    uint8_t who = Wire.available() ? Wire.read() : 0;
+    Serial.print("  WHO_AM_I: 0x");
+    Serial.println(who, HEX);
 
-  uint8_t who = 0;
-  Wire.requestFrom(0x68, 1);
-  if (Wire.available()) {
-    who = Wire.read();
+    // Wake up MPU-6050 (clear sleep bit in PWR_MGMT_1)
+    Wire.beginTransmission(mpu_addr);
+    Wire.write(0x6B);
+    Wire.write(0x00);
+    uint8_t err = Wire.endTransmission();
+    Serial.print("  Wake err: ");
+    Serial.println(err);
+
+    delay(100);
+
+    // Set gyroscope range ±250 deg/s
+    Wire.beginTransmission(mpu_addr);
+    Wire.write(0x1B);
+    Wire.write(0x00);
+    Wire.endTransmission();
+
+    // Set accelerometer range ±2g
+    Wire.beginTransmission(mpu_addr);
+    Wire.write(0x1C);
+    Wire.write(0x00);
+    Wire.endTransmission();
+
+    delay(50);
+
+    // Test read 14 bytes (accel + temp + gyro)
+    Wire.beginTransmission(mpu_addr);
+    Wire.write(0x3B);
+    uint8_t terr = Wire.endTransmission(false);
+    uint8_t n = Wire.requestFrom(mpu_addr, (uint8_t)14);
+    Serial.print("  Test read err=");
+    Serial.print(terr);
+    Serial.print(" bytes=");
+    Serial.println(n);
+    while (Wire.available()) Wire.read();  // flush
   }
-  Serial.print("MPU-6050 WHO_AM_I: 0x");
-  Serial.println(who, HEX);
-
-  // Wake up MPU-6050
-  Wire.beginTransmission(0x68);
-  Wire.write(0x6B);
-  Wire.write(0x00);
-  err = Wire.endTransmission();
-  Serial.print("MPU-6050 wake: ");
-  Serial.println(err);
-
-  delay(100);
-
-  // Set gyroscope range to ±250 deg/s
-  Wire.beginTransmission(0x68);
-  Wire.write(0x1B);
-  Wire.write(0x00);
-  Wire.endTransmission();
-
-  // Set accelerometer range to ±2g
-  Wire.beginTransmission(0x68);
-  Wire.write(0x1C);
-  Wire.write(0x00);
-  Wire.endTransmission();
 
   delay(100);
 
   // --- Initialize BMP280 ---
-  // Check chip ID (should be 0x58)
   Wire.beginTransmission(BMP280_ADDRESS);
-  Wire.write(0xD0);  // Chip ID register
-  Wire.endTransmission();
-  Wire.requestFrom(BMP280_ADDRESS, 1);
-  uint8_t bmp_id = 0;
-  if (Wire.available()) {
-    bmp_id = Wire.read();
-  }
+  Wire.write(0xD0);
+  Wire.endTransmission(false);
+  Wire.requestFrom(BMP280_ADDRESS, (uint8_t)1);
+  uint8_t bmp_id = Wire.available() ? Wire.read() : 0;
   Serial.print("BMP280 chip ID: 0x");
   Serial.println(bmp_id, HEX);
 
-  // Read calibration data from registers 0x88-0xA1
   Wire.beginTransmission(BMP280_ADDRESS);
   Wire.write(0x88);
-  Wire.endTransmission();
-  Wire.requestFrom(BMP280_ADDRESS, 24);
+  Wire.endTransmission(false);
+  Wire.requestFrom(BMP280_ADDRESS, (uint8_t)24);
 
   if (Wire.available() >= 24) {
-    // Read calibration as byte pairs (little-endian)
     uint8_t buf[24];
     for (int i = 0; i < 24; i++) buf[i] = Wire.read();
 
@@ -283,44 +309,23 @@ void setup_imu() {
     bmp280_calib.P7 = buf[18] | (buf[19] << 8);
     bmp280_calib.P8 = buf[20] | (buf[21] << 8);
     bmp280_calib.P9 = buf[22] | (buf[23] << 8);
-
     Serial.println("BMP280 calibration data loaded");
-    Serial.print("  T1="); Serial.print(bmp280_calib.T1);
-    Serial.print(" T2="); Serial.print(bmp280_calib.T2);
-    Serial.print(" T3="); Serial.println(bmp280_calib.T3);
   } else {
-    Serial.print("BMP280 calib FAILED, available=");
-    Serial.println(Wire.available());
+    Serial.println("BMP280 calib FAILED");
   }
 
-  // Configure BMP280: normal mode, osrs_t=2x, osrs_p=16x
+  // Configure BMP280: normal mode, osrs_t=2x, osrs_p=16x, filter=16
   Wire.beginTransmission(BMP280_ADDRESS);
   Wire.write(0xF4);
   Wire.write(0x57);
   Wire.endTransmission();
 
-  // Filter coefficient 16, standby 1s
   Wire.beginTransmission(BMP280_ADDRESS);
   Wire.write(0xF5);
   Wire.write(0xA0);
   Wire.endTransmission();
 
   delay(100);
-
-  // --- Test read from MPU-6050 ---
-  Wire.beginTransmission(0x68);
-  Wire.write(0x3B);
-  err = Wire.endTransmission();
-  Serial.print("MPU test read setup: ");
-  Serial.println(err);
-
-  uint8_t n = Wire.requestFrom(0x68, 14);
-  Serial.print("MPU requestFrom returned: ");
-  Serial.println(n);
-  Serial.print("MPU available: ");
-  Serial.println(Wire.available());
-  // Flush any bytes
-  while (Wire.available()) Wire.read();
 }
 
 void setup_rc_receiver() {
@@ -382,11 +387,11 @@ void setup_pid_controllers() {
 
 void read_mpu6050() {
   // Read 14 bytes from MPU-6050: accel (6 bytes) + temp (2 bytes) + gyro (6 bytes)
-  Wire.beginTransmission(0x68);
+  Wire.beginTransmission(mpu_addr);
   Wire.write(0x3B);  // Start at ACCEL_XOUT_H register
-  Wire.endTransmission();
+  Wire.endTransmission(false);  // Repeated start (no STOP before read)
 
-  Wire.requestFrom(0x68, 14);
+  Wire.requestFrom(mpu_addr, (uint8_t)14);
 
   int16_t accel_x_raw = 0, accel_y_raw = 0, accel_z_raw = 0;
   int16_t gyro_x_raw = 0, gyro_y_raw = 0, gyro_z_raw = 0;
