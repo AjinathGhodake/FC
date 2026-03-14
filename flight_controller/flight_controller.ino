@@ -189,6 +189,19 @@ void setup_led() {
   digitalWrite(LED_PIN, HIGH);  // OFF (active LOW)
 }
 
+// Reset the STM32 I2C peripheral and reinitialize Wire
+static void i2c_reset() {
+  Wire.end();
+  delay(10);
+  Wire.setSDA(PB7);
+  Wire.setSCL(PB6);
+  Wire.begin();
+  Wire.setClock(100000);
+  GPIOB->PUPDR &= ~((3 << 12) | (3 << 14));
+  GPIOB->PUPDR |=  ((1 << 12) | (1 << 14));
+  delay(10);
+}
+
 void setup_imu() {
   Wire.setSDA(PB7);
   Wire.setSCL(PB6);
@@ -199,65 +212,63 @@ void setup_imu() {
   GPIOB->PUPDR &= ~((3 << 12) | (3 << 14));
   GPIOB->PUPDR |=  ((1 << 12) | (1 << 14));
 
-  delay(100);
+  delay(250);  // Wait for sensors to power up
 
-  // --- I2C Bus Scan ---
-  Serial.println("I2C scan:");
-  bool found_any = false;
-  for (uint8_t addr = 1; addr < 127; addr++) {
-    Wire.beginTransmission(addr);
-    if (Wire.endTransmission() == 0) {
-      Serial.print("  Device at 0x");
-      Serial.println(addr, HEX);
-      found_any = true;
-    }
-  }
-  if (!found_any) Serial.println("  No I2C devices found!");
-
-  // --- Detect MPU-6050 address (0x68 or 0x69) ---
-  // AD0=GND → 0x68, AD0=VCC → 0x69
+  // --- Initialize MPU-6050 ---
+  // No scan - go directly to init to avoid corrupting I2C bus state.
+  // Try address 0x68 first (AD0=GND), then 0x69 (AD0=VCC).
   mpu_addr = 0;
-  for (uint8_t try_addr : {0x68, 0x69}) {
-    Wire.beginTransmission(try_addr);
-    if (Wire.endTransmission() == 0) {
-      mpu_addr = try_addr;
-      Serial.print("MPU-6050 found at 0x");
-      Serial.println(try_addr, HEX);
+  uint8_t try_addrs[2] = {0x68, 0x69};
+
+  for (int i = 0; i < 2; i++) {
+    uint8_t addr = try_addrs[i];
+
+    // Reset I2C before each attempt (clears any stuck state)
+    i2c_reset();
+
+    // Try reading WHO_AM_I register (0x75) — should return 0x68
+    Wire.beginTransmission(addr);
+    Wire.write(0x75);
+    uint8_t err = Wire.endTransmission(false);
+    uint8_t n = Wire.requestFrom(addr, (uint8_t)1);
+    uint8_t who = Wire.available() ? Wire.read() : 0xFF;
+
+    Serial.print("MPU probe 0x");
+    Serial.print(addr, HEX);
+    Serial.print(" -> err=");
+    Serial.print(err);
+    Serial.print(" who=0x");
+    Serial.println(who, HEX);
+
+    if (err == 0 && who == 0x68) {
+      mpu_addr = addr;
       break;
     }
   }
 
   if (mpu_addr == 0) {
-    Serial.println("ERROR: MPU-6050 NOT found at 0x68 or 0x69!");
-    Serial.println("Check wiring: SDA->PB7, SCL->PB6, VCC->3.3V, GND->GND");
-    mpu_addr = 0x68;  // Fall back so code doesn't crash
+    Serial.println("ERROR: MPU-6050 not responding. Check SDA->PB7, SCL->PB6, VCC->3.3V");
+    mpu_addr = 0x68;
   } else {
-    // Read WHO_AM_I (should be 0x68)
-    Wire.beginTransmission(mpu_addr);
-    Wire.write(0x75);
-    Wire.endTransmission(false);
-    Wire.requestFrom(mpu_addr, (uint8_t)1);
-    uint8_t who = Wire.available() ? Wire.read() : 0;
-    Serial.print("  WHO_AM_I: 0x");
-    Serial.println(who, HEX);
+    Serial.print("MPU-6050 OK at 0x");
+    Serial.println(mpu_addr, HEX);
 
-    // Wake up MPU-6050 (clear sleep bit in PWR_MGMT_1)
+    // Wake up MPU-6050
     Wire.beginTransmission(mpu_addr);
     Wire.write(0x6B);
     Wire.write(0x00);
-    uint8_t err = Wire.endTransmission();
-    Serial.print("  Wake err: ");
-    Serial.println(err);
+    Serial.print("  Wake: ");
+    Serial.println(Wire.endTransmission());
 
     delay(100);
 
-    // Set gyroscope range ±250 deg/s
+    // Gyro range ±250 deg/s
     Wire.beginTransmission(mpu_addr);
     Wire.write(0x1B);
     Wire.write(0x00);
     Wire.endTransmission();
 
-    // Set accelerometer range ±2g
+    // Accel range ±2g
     Wire.beginTransmission(mpu_addr);
     Wire.write(0x1C);
     Wire.write(0x00);
@@ -265,19 +276,20 @@ void setup_imu() {
 
     delay(50);
 
-    // Test read 14 bytes (accel + temp + gyro)
+    // Verify: test read of 14 bytes
     Wire.beginTransmission(mpu_addr);
     Wire.write(0x3B);
-    uint8_t terr = Wire.endTransmission(false);
-    uint8_t n = Wire.requestFrom(mpu_addr, (uint8_t)14);
-    Serial.print("  Test read err=");
-    Serial.print(terr);
+    uint8_t te = Wire.endTransmission(false);
+    uint8_t nb = Wire.requestFrom(mpu_addr, (uint8_t)14);
+    Serial.print("  Data read: err=");
+    Serial.print(te);
     Serial.print(" bytes=");
-    Serial.println(n);
-    while (Wire.available()) Wire.read();  // flush
+    Serial.println(nb);
+    while (Wire.available()) Wire.read();
   }
 
-  delay(100);
+  // Reset I2C before BMP280 init to ensure clean state
+  i2c_reset();
 
   // --- Initialize BMP280 ---
   Wire.beginTransmission(BMP280_ADDRESS);
