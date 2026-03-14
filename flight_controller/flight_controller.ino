@@ -423,11 +423,18 @@ void read_mpu6050() {
     gyro_y_raw = (Wire.read() << 8) | Wire.read();
     gyro_z_raw = (Wire.read() << 8) | Wire.read();
 
+    // Apply calibration offsets (measured during stationary calibration run)
+    accel_x_raw -= 535;
+    accel_y_raw -= 415;
+    accel_z_raw -= (-706);
+    gyro_x_raw  -= 179;
+    gyro_y_raw  -= 765;
+    gyro_z_raw  -= (-150);
+
     // Convert to physical units
-    // MPU-6050 with ±2g range: 16384 LSB/g
-    // MPU-6050 with ±250 deg/s range: 131 LSB/(deg/s) = 7505.7 LSB/(rad/s)
-    const float ACCEL_SCALE = 9.81f / 16384.0f;      // m/s^2 per LSB
-    const float GYRO_SCALE = (M_PI / 180.0f) / 131.0f;  // rad/s per LSB
+    // MPU-6050 ±2g: 16384 LSB/g  |  ±250 deg/s: 131 LSB/(deg/s)
+    const float ACCEL_SCALE = 9.81f / 16384.0f;
+    const float GYRO_SCALE  = (M_PI / 180.0f) / 131.0f;
 
     imu_data.accel_x = accel_x_raw * ACCEL_SCALE;
     imu_data.accel_y = accel_y_raw * ACCEL_SCALE;
