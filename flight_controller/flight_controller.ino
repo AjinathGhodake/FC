@@ -19,6 +19,7 @@
 #include "motor_mixer.h"
 #include "pwm_output.h"
 #include "config.h"
+#include "mavlink_telemetry.h"
 
 // ============================================================================
 // Configuration
@@ -53,6 +54,10 @@ RCChannels rc_channels;    // Current RC channel values
 
 NEO6M gps;                 // GPS receiver (NEO-6M on UART1)
 GPSData gps_data;          // Current GPS data
+
+#ifdef MAVLINK_ENABLED
+MAVLinkTelemetry mav;      // MAVLink telemetry for QGroundControl
+#endif
 
 AttitudePIDController attitude_pid;  // Cascaded attitude controller
 RatePIDController rate_pid;          // Inner rate controller
@@ -130,6 +135,11 @@ void setup() {
   gps.begin();
   Serial.println("GPS NEO-6M UART1 initialized at 9600 baud");
 
+#ifdef MAVLINK_ENABLED
+  mav.begin();
+  Serial.println("MAVLink telemetry enabled — connect QGroundControl to this COM port");
+#endif
+
   Serial.println("Initialization complete.");
   Serial.println("Complementary Filter: 98% gyro + 2% accel");
   Serial.println("RC Receiver (CRSF/ELRS) initialized on UART2");
@@ -190,12 +200,24 @@ void loop() {
   // Update PWM output with motor values (or disarm all if not armed)
   update_pwm_output();
 
-  // Print debug info at configurable interval
+#ifdef MAVLINK_ENABLED
+  // Send MAVLink telemetry to QGroundControl
+  mav.update(
+    current_angles,
+    imu_data,
+    gps_data,
+    armed,
+    filter.getAltitude(),
+    rc_channels.throttle
+  );
+#else
+  // Print human-readable dashboard to Serial Monitor
   static int loop_counter = 0;
   if (++loop_counter >= DEBUG_LOG_INTERVAL) {
     print_bench_test_log();
     loop_counter = 0;
   }
+#endif
 
   // Toggle LED to indicate loop is running
   digitalWrite(LED_PIN, !digitalRead(LED_PIN));

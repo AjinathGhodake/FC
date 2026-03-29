@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include "gps.h"
+#include "config.h"
 
 // Serial1 is already defined by STM32 core (UART1: PA10=RX, PA9=TX)
 // No need to redeclare — just use Serial1.begin() directly
@@ -72,7 +73,8 @@ void NEO6M::update() {
     }
   }
 
-  // Debug: print clean GPS status every 3 seconds
+#ifndef MAVLINK_ENABLED
+  // Debug: print clean GPS status every 3 seconds (text mode only)
   static unsigned long last_debug = 0;
   if (millis() - last_debug >= 3000) {
     Serial.print("GPS: ");
@@ -96,6 +98,7 @@ void NEO6M::update() {
     }
     last_debug = millis();
   }
+#endif
 }
 
 GPSData NEO6M::getData() const {
@@ -111,8 +114,10 @@ bool NEO6M::hasFix() const {
 // ============================================================================
 
 void NEO6M::process_sentence() {
-  // Print ALL raw NMEA sentences to diagnose antenna/signal issues
+#ifndef MAVLINK_ENABLED
+  // Print raw NMEA sentences for serial monitor debugging
   Serial.println(sentence);
+#endif
 
   // Validate checksum first
   if (!validate_checksum(sentence)) {

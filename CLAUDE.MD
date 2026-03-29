@@ -80,12 +80,31 @@ Interface:
 UART (TTL serial), default baud rate 9600
 
 Connection:
-GPS TX → STM32 RX
-GPS RX → STM32 TX
-VCC → 3.3V or 5V
+GPS TX → PA10 (UART1 RX)
+GPS RX → PA9  (UART1 TX)
+VCC → 5V  (IMPORTANT: must be 5V, not 3.3V — module has onboard LDO regulator)
 GND → GND
 
-Status: Purchased
+IMPORTANT: Power from 5V pin, NOT 3.3V. The GY-NEO6MV2 needs ~45mA during
+satellite acquisition. The STM32 3.3V LDO cannot supply enough current and
+causes the GPS to boot-loop continuously. 5V comes from USB directly (500mA).
+
+Driver notes:
+- Use Serial1 directly (STM32 core already defines it — do NOT redeclare HardwareSerial)
+- Set pins explicitly: Serial1.setRx(PA10); Serial1.setTx(PA9); before Serial1.begin()
+- Parse $GPGGA (fix, satellites, lat/lon/alt) and $GPRMC (speed, course, fix status)
+- Also handles $GNGGA / $GNRMC variants
+- NMEA checksum validated (XOR between $ and *)
+- Coordinate format: DDMM.MMMM → decimal degrees conversion
+- DO NOT send cold start commands ($PMTK104 or UBX cold start) — erases almanac EEPROM
+- After almanac wipe: 10–15 min cold start needed outdoors
+- After first fix: warm start in 30–60 sec; hot start (same day) in < 5 sec
+
+Verified location: Pune, Maharashtra, India (18.5337°N, 73.9501°E)
+Verified altitude: ~565m
+Verified 3D fix with 4 satellites (PRN 02, 10, 31, 26)
+
+Status: Purchased and working
 
 ---
 
@@ -232,8 +251,10 @@ Status: Planned (not purchased yet)
 
 Purchased Components:
 - STM32F411CEU6 development board
-- QMC5883P compass module (GY-271, sold as HMC5883L but actually QMC5883P at 0x2C)
-- GPS NEO-6M module
+- MPU-6050 IMU (I2C 0x68) — working
+- BMP280 barometer (I2C 0x76) — working
+- QMC5883P compass module (GY-271, sold as HMC5883L but actually QMC5883P at 0x2C) — working
+- GPS NEO-6M module (UART1 PA10/PA9, 5V power) — working, 3D fix confirmed
 
 Not Yet Purchased:
 - Telemetry radio

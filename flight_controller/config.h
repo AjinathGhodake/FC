@@ -26,10 +26,24 @@
 #define ALT_PID_KD 0.1f        // Derivative gain
 
 // ============================================================================
+// MAVLink Telemetry — QGroundControl integration
+// ============================================================================
+//
+// Uncomment to enable MAVLink output over USB Serial.
+// Requires: install "MAVLink" library from Arduino Library Manager.
+//
+// When ENABLED:  Serial outputs MAVLink binary → connect QGC to USB COM port
+// When DISABLED: Serial outputs human-readable text dashboard (default)
+//
+// To enable: uncomment the line below, flash, open QGroundControl
+// #define MAVLINK_ENABLED
+
+// ============================================================================
 // Debug Logging Configuration
 // ============================================================================
 
 // Enable debug output (print every N loop iterations)
+// Only active when MAVLINK_ENABLED is NOT defined
 #define DEBUG_LOG_INTERVAL 300  // Print every 300 loops (~3s at 100 Hz)
 
 // Format string for debug output:
