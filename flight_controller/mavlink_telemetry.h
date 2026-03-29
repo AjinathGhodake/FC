@@ -21,7 +21,7 @@
 // ============================================================================
 
 #ifdef MAVLINK_ENABLED
-#include <mavlink.h>
+#include <MAVLink.h>
 
 // Vehicle IDs
 #define MAV_SYS_ID   1    // System ID (our drone)

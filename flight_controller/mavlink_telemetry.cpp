@@ -134,7 +134,13 @@ void MAVLinkTelemetry::send_gps_raw(const GPSData& gps) {
     UINT16_MAX,                           // epv unknown
     vel,
     cog,
-    gps.satellites
+    gps.satellites,
+    0,          // alt_ellipsoid (mm) — not available
+    UINT32_MAX, // h_acc — unknown
+    UINT32_MAX, // v_acc — unknown
+    UINT32_MAX, // vel_acc — unknown
+    UINT32_MAX, // hdg_acc — unknown
+    0           // yaw — not available
   );
   write_msg(msg);
 }
@@ -207,7 +213,8 @@ void MAVLinkTelemetry::send_scaled_pressure(float pressure_pa) {
     millis(),
     pressure_pa / 100.0f,  // Pa → hPa
     0.0f,                   // differential pressure (none)
-    2500                    // temperature in cdegC (25.00°C placeholder)
+    2500,                   // temperature in cdegC (25.00°C placeholder)
+    0                       // temperature_press_diff — not available
   );
   write_msg(msg);
 }
