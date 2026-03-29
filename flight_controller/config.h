@@ -30,7 +30,7 @@
 // ============================================================================
 
 // Enable debug output (print every N loop iterations)
-#define DEBUG_LOG_INTERVAL 10   // Print every 10 loops (~100ms at 100 Hz)
+#define DEBUG_LOG_INTERVAL 300  // Print every 300 loops (~3s at 100 Hz)
 
 // Format string for debug output:
 // "T:1234 | Att: R=0.5 P=1.2 Y=-0.3 | RC: Th=1500 | Motors: 1500 1500 1500 1500"

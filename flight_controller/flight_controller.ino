@@ -14,6 +14,7 @@
 #include <Wire.h>
 #include "sensors.h"
 #include "rc_input.h"
+#include "gps.h"
 #include "pid_controller.h"
 #include "motor_mixer.h"
 #include "pwm_output.h"
@@ -33,6 +34,10 @@
 // BMP280 I2C address (SDO connected to GND = 0x76)
 #define BMP280_ADDRESS 0x76
 
+// QMC5883P magnetometer I2C address (GY-271 module)
+// Note: QMC5883P uses 0x2C (different from QMC5883L=0x0D, HMC5883L=0x1E)
+#define QMC5883P_ADDRESS 0x2C
+
 // ============================================================================
 // Global Variables
 // ============================================================================
@@ -45,6 +50,9 @@ uint8_t mpu_addr = 0x68;  // MPU-6050 address (0x68 if AD0=GND, 0x69 if AD0=VCC)
 
 CRSFReceiver rc_receiver;  // CRSF RC receiver
 RCChannels rc_channels;    // Current RC channel values
+
+NEO6M gps;                 // GPS receiver (NEO-6M on UART1)
+GPSData gps_data;          // Current GPS data
 
 AttitudePIDController attitude_pid;  // Cascaded attitude controller
 RatePIDController rate_pid;          // Inner rate controller
@@ -85,8 +93,10 @@ void setup_led();
 void setup_rc_receiver();
 void setup_pwm_output();
 void setup_pid_controllers();
+void setup_compass();
 void read_mpu6050();
 void read_bmp280();
+void read_compass();
 void update_filter();
 void update_rc_receiver();
 void update_arm_disarm_logic();
@@ -111,13 +121,19 @@ void setup() {
 
   setup_led();
   setup_imu();
+  setup_compass();  // QMC5883P with proper continuous mode initialization
   setup_rc_receiver();
   setup_pwm_output();
   setup_pid_controllers();
 
+  // Initialize GPS on UART1 (PA9=TX, PA10=RX)
+  gps.begin();
+  Serial.println("GPS NEO-6M UART1 initialized at 9600 baud");
+
   Serial.println("Initialization complete.");
   Serial.println("Complementary Filter: 98% gyro + 2% accel");
   Serial.println("RC Receiver (CRSF/ELRS) initialized on UART2");
+  Serial.println("GPS NEO-6M on UART1 (PA10=RX, PA9=TX)");
   Serial.println("PWM Output (50 Hz) on PA0,PA1,PB0,PB1 (Motors 1-4)");
   Serial.println("SAFETY: Arm with RC Mode > 1500 μs, Disarm with Mode < 1500 μs");
 
@@ -143,6 +159,11 @@ void loop() {
   // Read sensor data
   read_mpu6050();
   read_bmp280();
+  read_compass();  // QMC5883P compass
+
+  // Update GPS (reads available UART bytes, parses NMEA)
+  gps.update();
+  gps_data = gps.getData();
 
   // Update RC receiver
   update_rc_receiver();
@@ -486,6 +507,164 @@ void read_bmp280() {
 }
 
 // ============================================================================
+// QMC5883P Compass (Magnetometer) Setup
+// ============================================================================
+
+void setup_compass() {
+  // Initialize QMC5883P magnetometer at address 0x2C
+  // QMC5883P is a DIFFERENT chip from QMC5883L — different register map!
+  // Chip ID register 0x00 = 0x80, control register = 0x0A (not 0x09)
+  // Data registers start at 0x01 (not 0x00), STATUS is at 0x09
+
+  delay(100);
+
+  Serial.print("QMC5883P: ");
+
+  // Step 1: Verify chip ID (register 0x00 should be 0x80)
+  Wire.beginTransmission(QMC5883P_ADDRESS);
+  Wire.write(0x00);
+  Wire.endTransmission(false);
+  Wire.requestFrom(QMC5883P_ADDRESS, (uint8_t)1);
+  uint8_t chip_id = 0;
+  if (Wire.available()) {
+    chip_id = Wire.read();
+  }
+  Serial.print("ID=0x");
+  Serial.print(chip_id, HEX);
+
+  // Step 2: Write hidden register 0x0D (required for data path)
+  Wire.beginTransmission(QMC5883P_ADDRESS);
+  Wire.write(0x0D);
+  Wire.write(0x40);
+  uint8_t e1 = Wire.endTransmission();
+  delay(10);
+
+  // Step 3: Write XYZ sign/unlock register 0x29
+  Wire.beginTransmission(QMC5883P_ADDRESS);
+  Wire.write(0x29);
+  Wire.write(0x06);
+  uint8_t e2 = Wire.endTransmission();
+  delay(10);
+
+  // Step 4: CONF2 register (0x0B) — Range and set/reset (write BEFORE CONF1)
+  // Bit 7: SOFT_RST (0 = no reset)
+  // Bit 3-2: Range - 00=30G, 01=12G, 10=8G, 11=2G
+  // Bit 1-0: Set/Reset - 00=On, 01=Set only, 10=Off
+  Wire.beginTransmission(QMC5883P_ADDRESS);
+  Wire.write(0x0B);
+  Wire.write(0x08);  // 8G range, set/reset ON
+  uint8_t e3 = Wire.endTransmission();
+  delay(10);
+
+  // Step 5: CONF1 register (0x0A) — THE KEY REGISTER for mode control
+  // Bit 7-6: DSR (Downsample Ratio) - 00=1x, 01=2x, 10=4x, 11=8x
+  // Bit 5-4: OSR (Oversample Ratio) - 00=8x, 01=4x, 10=2x, 11=1x
+  // Bit 3-2: ODR (Output Data Rate) - 00=10Hz, 01=50Hz, 10=100Hz, 11=200Hz
+  // Bit 1-0: MODE - 00=Suspend, 01=Normal, 10=Single, 11=Continuous
+  //
+  // 0x0F = 0000 1111 = DSR 1x + OSR 8x + ODR 200Hz + Continuous mode
+  Wire.beginTransmission(QMC5883P_ADDRESS);
+  Wire.write(0x0A);
+  Wire.write(0x0F);  // Continuous mode, 200Hz, 8x oversample
+  uint8_t ctrl_err = Wire.endTransmission();
+  delay(50);
+
+  Serial.print(" W[0x0D]=");
+  Serial.print(e1);
+  Serial.print(" W[0x29]=");
+  Serial.print(e2);
+  Serial.print(" W[0x0B]=");
+  Serial.print(e3);
+  Serial.print(" W[0x0A]=");
+  Serial.print(ctrl_err);
+
+  // Verify: read back CONF1 (0x0A) and STATUS (0x09)
+  Wire.beginTransmission(QMC5883P_ADDRESS);
+  Wire.write(0x0A);
+  Wire.endTransmission(false);
+  Wire.requestFrom(QMC5883P_ADDRESS, (uint8_t)1);
+  uint8_t conf1_verify = 0;
+  if (Wire.available()) {
+    conf1_verify = Wire.read();
+  }
+
+  Serial.print(" CONF1=0x");
+  Serial.print(conf1_verify, HEX);
+  Serial.print(" err=");
+  Serial.print(ctrl_err);
+
+  if (conf1_verify == 0x0F) {
+    Serial.println(" OK (continuous mode)");
+  } else {
+    Serial.print(" MISMATCH (expected 0x0F, got 0x");
+    Serial.print(conf1_verify, HEX);
+    Serial.println(")");
+  }
+}
+
+// ============================================================================
+// QMC5883P Compass Reading
+// ============================================================================
+
+void read_compass() {
+  // QMC5883P register map:
+  //   0x00 = Chip ID (0x80)
+  //   0x01-0x06 = X_LSB, X_MSB, Y_LSB, Y_MSB, Z_LSB, Z_MSB
+  //   0x09 = STATUS (bit 0 = DRDY)
+
+  // Check STATUS register (0x09) for data ready
+  Wire.beginTransmission(QMC5883P_ADDRESS);
+  Wire.write(0x09);
+  Wire.endTransmission(false);
+  Wire.requestFrom(QMC5883P_ADDRESS, (uint8_t)1);
+
+  uint8_t status = 0;
+  if (Wire.available()) {
+    status = Wire.read();
+  }
+
+  // Debug counter
+  static int compass_debug_count = 0;
+  compass_debug_count++;
+
+  if (!(status & 0x01)) {
+    // Data not ready, skip this read
+    return;
+  }
+
+  // Read 6 bytes starting from register 0x01 (X_LSB)
+  Wire.beginTransmission(QMC5883P_ADDRESS);
+  Wire.write(0x01);  // Data starts at 0x01 for QMC5883P
+  uint8_t err = Wire.endTransmission(false);
+
+  uint8_t n = Wire.requestFrom(QMC5883P_ADDRESS, (uint8_t)6);
+
+  if (err == 0 && n >= 6 && Wire.available() >= 6) {
+    // Read raw magnetometer values (little-endian: LSB first)
+    int16_t mag_x_raw = Wire.read() | ((int16_t)Wire.read() << 8);
+    int16_t mag_y_raw = Wire.read() | ((int16_t)Wire.read() << 8);
+    int16_t mag_z_raw = Wire.read() | ((int16_t)Wire.read() << 8);
+
+    // Scale to Gauss (QMC5883P at 8G range: ~3000 LSB/Gauss)
+    const float MAG_SCALE = 1.0f / 3000.0f;
+
+    imu_data.mag_x = mag_x_raw * MAG_SCALE;
+    imu_data.mag_y = mag_y_raw * MAG_SCALE;
+    imu_data.mag_z = mag_z_raw * MAG_SCALE;
+
+    // Calculate heading from magnetic field
+    float heading_rad = atan2(imu_data.mag_y, imu_data.mag_x);
+    imu_data.heading = heading_rad * 180.0f / M_PI;
+    if (imu_data.heading < 0) {
+      imu_data.heading += 360.0f;
+    }
+
+  } else {
+    // Compass read failed — silently skip
+  }
+}
+
+// ============================================================================
 // Filter Update
 // ============================================================================
 
@@ -702,63 +881,77 @@ void update_pwm_output() {
 // Format: "T:1234 | Att: R=0.5 P=1.2 Y=-0.3 | RC: Th=1500 | Motors: 1500 1500 1500 1500"
 
 void print_bench_test_log() {
-  // Get current time in milliseconds (for correlation with logs)
   unsigned long current_ms = millis();
 
-  // Print timestamp
-  Serial.print("T:");
-  Serial.print(current_ms);
+  Serial.println("========================================");
+  Serial.print("T: ");
+  Serial.print(current_ms / 1000.0f, 1);
+  Serial.print("s | ");
+  Serial.println(armed ? "[ARMED]" : "[DISARMED]");
 
-  // Print arm status
-  Serial.print(" | [");
-  Serial.print(armed ? "ARMED" : "DISARM");
-  Serial.print("] ");
-
-  // Print attitude angles in degrees
-  Serial.print("Att: R=");
+  // IMU (MPU-6050)
+  Serial.print("  IMU     | Roll: ");
   Serial.print(current_angles.roll * 180.0f / M_PI, 1);
-  Serial.print(" P=");
+  Serial.print("°  Pitch: ");
   Serial.print(current_angles.pitch * 180.0f / M_PI, 1);
-  Serial.print(" Y=");
+  Serial.print("°  Yaw: ");
   Serial.print(current_angles.yaw * 180.0f / M_PI, 1);
+  Serial.println("°");
 
-  // Print RC inputs
-  Serial.print(" | RC: Th=");
-  Serial.print(rc_channels.throttle);
-  Serial.print(" Ro=");
-  Serial.print(rc_channels.roll);
-  Serial.print(" Pi=");
-  Serial.print(rc_channels.pitch);
-  Serial.print(" Ya=");
-  Serial.print(rc_channels.yaw);
+  // Barometer (BMP280)
+  Serial.print("  BARO    | Alt: ");
+  Serial.print(filter.getAltitude(), 1);
+  Serial.print("m  Pressure: ");
+  Serial.print(imu_data.pressure / 100.0f, 1);
+  Serial.println("hPa");
 
-  // Show RC signal status
-  if (!rc_receiver.isConnected()) {
-    Serial.print(" [NO_SIGNAL]");
+  // Compass (QMC5883P)
+  Serial.print("  COMPASS | Hdg: ");
+  Serial.print(imu_data.heading, 1);
+  Serial.print("°  X: ");
+  Serial.print(imu_data.mag_x, 2);
+  Serial.print("  Y: ");
+  Serial.print(imu_data.mag_y, 2);
+  Serial.print("  Z: ");
+  Serial.println(imu_data.mag_z, 2);
+
+  // GPS (NEO-6M)
+  Serial.print("  GPS     | ");
+  if (gps_data.fix_valid) {
+    Serial.print("FIX_OK  Sat: ");
+    Serial.print(gps_data.satellites);
+    Serial.print("  Lat: ");
+    Serial.print(gps_data.latitude, 6);
+    Serial.print("  Lon: ");
+    Serial.print(gps_data.longitude, 6);
+    Serial.print("  Alt: ");
+    Serial.print(gps_data.altitude_gps, 1);
+    Serial.print("m  Speed: ");
+    Serial.print(gps_data.speed_knots, 1);
+    Serial.println("kts");
+  } else {
+    Serial.print("NO_FIX  Sat: ");
+    Serial.println(gps_data.satellites);
   }
 
-  // Print motor outputs
-  Serial.print(" | Motors: ");
+  // RC Receiver
+  Serial.print("  RC      | Thr: ");
+  Serial.print(rc_channels.throttle);
+  Serial.print("  Roll: ");
+  Serial.print(rc_channels.roll);
+  Serial.print("  Pitch: ");
+  Serial.print(rc_channels.pitch);
+  Serial.print("  Yaw: ");
+  Serial.print(rc_channels.yaw);
+  Serial.println(rc_receiver.isConnected() ? "  [CONNECTED]" : "  [NO_SIGNAL]");
+
+  // Motors
+  Serial.print("  MOTORS  | M1: ");
   Serial.print(pwm_output.getMotor(1));
-  Serial.print(" ");
+  Serial.print("  M2: ");
   Serial.print(pwm_output.getMotor(2));
-  Serial.print(" ");
+  Serial.print("  M3: ");
   Serial.print(pwm_output.getMotor(3));
-  Serial.print(" ");
-  Serial.print(pwm_output.getMotor(4));
-
-  // Print altitude info
-  Serial.print(" | Alt: ");
-  Serial.print(filter.getAltitude(), 1);
-  Serial.print("m");
-
-  // Print rate corrections (from rate PID)
-  Serial.print(" | Rate: R=");
-  Serial.print(rate_output.roll, 3);
-  Serial.print(" P=");
-  Serial.print(rate_output.pitch, 3);
-  Serial.print(" Y=");
-  Serial.print(rate_output.yaw, 3);
-
-  Serial.println();
+  Serial.print("  M4: ");
+  Serial.println(pwm_output.getMotor(4));
 }

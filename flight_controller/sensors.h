@@ -13,6 +13,10 @@ struct IMUData {
   float gyro_y;   // rad/s
   float gyro_z;   // rad/s
   float pressure; // Pa (from BMP280)
+  float mag_x;    // Gauss (from QMC5883P)
+  float mag_y;    // Gauss (from QMC5883P)
+  float mag_z;    // Gauss (from QMC5883P)
+  float heading;  // degrees (0-360) from compass
 };
 
 // Struct to hold orientation angles

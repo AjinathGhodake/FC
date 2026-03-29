@@ -20,7 +20,26 @@ Status: Purchased
 
 ## Magnetometer (Compass)
 
-Module: HMC5883L (GY-271)
+Module: GY-271 board with **QMC5883P** chip (by QST Corporation)
+
+IMPORTANT: The GY-271 module was labeled/sold as HMC5883L but actually contains a QMC5883P chip.
+This is a completely different chip with a different register map.
+- QMC5883P I2C address: 0x2C
+- HMC5883L address: 0x1E (NOT this chip)
+- QMC5883L address: 0x0D (NOT this chip either)
+- Chip ID: register 0x00 = 0x80
+
+QMC5883P Register Map:
+- 0x00: Chip ID (0x80)
+- 0x01-0x06: Data registers (X_LSB, X_MSB, Y_LSB, Y_MSB, Z_LSB, Z_MSB)
+- 0x09: STATUS register (read-only, bit 0 = DRDY)
+- 0x0A: CONF1/CTL1 (mode, ODR, oversample) — control register
+- 0x0B: CONF2/CTL2 (range, set/reset, soft reset bit 7)
+- 0x0D: Hidden init register (write 0x40)
+- 0x29: XYZ sign/unlock register (write 0x06)
+
+CONF1 (0x0A) bits: [7:6]=DSR, [5:4]=OSR, [3:2]=ODR, [1:0]=MODE
+MODE: 00=Suspend, 01=Normal, 10=Single, 11=Continuous
 
 Purpose:
 - Heading detection
@@ -28,9 +47,9 @@ Purpose:
 - Used along with GPS for orientation
 
 Interface:
-I2C
+I2C (works with STM32 internal pull-ups, external pull-ups NOT needed)
 
-Typical connection:
+Connection:
 SCL → PB6
 SDA → PB7
 
@@ -40,19 +59,31 @@ Status: Purchased
 
 ## GPS Module
 
-Module: Ublox NEO-6M / GY-NEO6MV2
+Module: GY-NEO6MV2 (u-blox NEO-6M GPS chipset)
+
+Specs:
+- Receiver: u-blox NEO-6M
+- Sensitivity: -161 dBm (tracking)
+- Positioning accuracy: <2500mm (2.5m)
+- Flash memory: 24C32 EEPROM (32Kb) for config storage
+- Antenna: Built-in ceramic + external active antenna included
+- Protocol: NMEA standard output
+- Features: Real-time 3D positioning, velocity output, LED indicator
 
 Purpose:
-- Position tracking
+- Position tracking (latitude, longitude)
 - Waypoint navigation
 - Return-to-home capability
+- Speed and altitude data
 
 Interface:
-UART
+UART (TTL serial), default baud rate 9600
 
-Typical connection:
-TX → STM32 RX
-RX → STM32 TX
+Connection:
+GPS TX → STM32 RX
+GPS RX → STM32 TX
+VCC → 3.3V or 5V
+GND → GND
 
 Status: Purchased
 
@@ -66,39 +97,32 @@ These sensors are planned for later stages of the drone development.
 
 ## IMU (Accelerometer + Gyroscope)
 
+Module: MPU-6050
+
 Purpose:
 - Detect drone orientation
 - Measure acceleration
 - Stabilization of drone flight
 
-Typical sensors:
-MPU6050
-MPU9250
-ICM20948
+Interface: I2C (address 0x68)
+Connection: SCL → PB6, SDA → PB7
 
-Why needed:
-A drone **cannot stabilize without an IMU**.
-
-Status: Not purchased yet
-
-Priority: HIGH
+Status: Purchased and working
 
 ---
 
 ## Barometer (Altitude Sensor)
+
+Module: BMP280
 
 Purpose:
 - Measure altitude
 - Improve flight stability
 - Used for altitude hold
 
-Example modules:
-BMP280
-MS5611
+Interface: I2C (address 0x76, CSB→3.3V, SDO→GND)
 
-Status: Not purchased yet
-
-Priority: Medium
+Status: Purchased and working
 
 ---
 
@@ -208,12 +232,10 @@ Status: Planned (not purchased yet)
 
 Purchased Components:
 - STM32F411CEU6 development board
-- HMC5883L compass module
+- QMC5883P compass module (GY-271, sold as HMC5883L but actually QMC5883P at 0x2C)
 - GPS NEO-6M module
 
 Not Yet Purchased:
-- IMU sensor
-- Barometer
 - Telemetry radio
 - Jetson Orin Nano
 - Camera module
