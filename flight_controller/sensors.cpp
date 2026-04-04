@@ -84,12 +84,13 @@ void ComplementaryFilter::update(const IMUData& imu_data, const GPSData* gps_dat
   altitude = ALT_BARO_WEIGHT * baro_altitude +
              ALT_ACCEL_WEIGHT * altitude_velocity;
 
-  // GPS altitude correction (very slow complementary filter)
-  // If GPS has a valid fix, gradually pull barometer toward GPS altitude
-  // This corrects long-term barometer drift due to temperature/weather
+  // GPS altitude correction (faster convergence for calibration)
+  // If GPS has a valid fix, blend GPS altitude to calibrate barometer
+  // This corrects sea-level pressure errors and long-term drift
   if (gps_data != nullptr && gps_data->fix_valid) {
-    // 0.01% correction per update = ~10 second settling time (slow drift anchor)
-    altitude += 0.0001f * (gps_data->altitude_gps - altitude);
+    // Use stronger correction (5%) so barometer converges to GPS in ~20 seconds
+    // After convergence, GPS stays as the altitude anchor
+    altitude = 0.95f * altitude + 0.05f * gps_data->altitude_gps;
   }
 }
 
