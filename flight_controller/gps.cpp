@@ -74,6 +74,7 @@ void NEO6M::update() {
   }
 
 #ifndef MAVLINK_ENABLED
+#ifndef DISABLE_GPS_DEBUG
   // Debug: print clean GPS status every 3 seconds (text mode only)
   static unsigned long last_debug = 0;
   if (millis() - last_debug >= 3000) {
@@ -99,6 +100,7 @@ void NEO6M::update() {
     last_debug = millis();
   }
 #endif
+#endif
 }
 
 GPSData NEO6M::getData() const {
@@ -115,8 +117,10 @@ bool NEO6M::hasFix() const {
 
 void NEO6M::process_sentence() {
 #ifndef MAVLINK_ENABLED
+#ifndef DISABLE_GPS_DEBUG
   // Print raw NMEA sentences for serial monitor debugging
   Serial.println(sentence);
+#endif
 #endif
 
   // Validate checksum first

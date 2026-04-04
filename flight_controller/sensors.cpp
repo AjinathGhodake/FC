@@ -1,12 +1,27 @@
 #include <Arduino.h>
 #include "sensors.h"
+#include "config.h"
+#include "gps.h"
 
 ComplementaryFilter::ComplementaryFilter(float alpha)
-    : alpha(alpha) {
+    : alpha(alpha), madgwick(MADGWICK_BETA, MADGWICK_SAMPLE_RATE) {
   reset();
 }
 
-void ComplementaryFilter::update(const IMUData& imu_data, float dt) {
+void ComplementaryFilter::update(const IMUData& imu_data, const GPSData* gps_data, float dt) {
+#ifdef USE_MADGWICK
+  // ========== Madgwick Filter (Gyro + Accel + Mag) ==========
+  // Quaternion-based fusion for drift-free roll, pitch, and yaw
+  madgwick.update(imu_data.gyro_x, imu_data.gyro_y, imu_data.gyro_z,
+                  imu_data.accel_x, imu_data.accel_y, imu_data.accel_z,
+                  imu_data.mag_x,   imu_data.mag_y,   imu_data.mag_z);
+
+  angles.roll = madgwick.getRoll();
+  angles.pitch = madgwick.getPitch();
+  angles.yaw = madgwick.getYaw();
+#else
+  // ========== Complementary Filter (Gyro + Accel) ==========
+  // Fast gyro with accel drift correction
   // Calculate accelerometer-based angles
   Angles accel_angles = calculateAccelAngles(imu_data);
 
@@ -25,11 +40,25 @@ void ComplementaryFilter::update(const IMUData& imu_data, float dt) {
   angles.pitch = alpha * (angles.pitch + gyro_pitch)
                  + (1.0f - alpha) * accel_angles.pitch;
 
-  // For yaw, we only integrate gyro (no accelerometer information)
+  // For yaw, integrate gyro and correct with magnetometer (compass)
+  // 98% gyro (fast, responsive) + 2% compass (drift-free anchor)
   angles.yaw += imu_data.gyro_z * dt;
+
+  // Calculate compass-based yaw from magnetometer X and Y
+  float compass_yaw = atan2f(imu_data.mag_y, imu_data.mag_x);
+
+  // Calculate shortest angular distance between gyro yaw and compass yaw
+  float yaw_diff = compass_yaw - angles.yaw;
+  while (yaw_diff > M_PI) yaw_diff -= 2.0f * M_PI;
+  while (yaw_diff < -M_PI) yaw_diff += 2.0f * M_PI;
+
+  // Apply 2% compass correction (slow, stable anchor to prevent drift)
+  angles.yaw += 0.02f * yaw_diff;
+
   // Wrap yaw to [-π, π] to prevent overflow
   while (angles.yaw > M_PI) angles.yaw -= 2.0f * M_PI;
   while (angles.yaw < -M_PI) angles.yaw += 2.0f * M_PI;
+#endif
 
   // ========== Altitude Fusion ==========
   // Transform vertical acceleration to world frame using current attitude
@@ -50,10 +79,18 @@ void ComplementaryFilter::update(const IMUData& imu_data, float dt) {
   // Get barometer-based altitude from pressure
   float baro_altitude = pressureToAltitude(imu_data.pressure);
 
-  // Complementary filter for altitude:
+  // Complementary filter for altitude (barometer + accel):
   // 90% trust barometer (absolute), 10% trust accel velocity
   altitude = ALT_BARO_WEIGHT * baro_altitude +
              ALT_ACCEL_WEIGHT * altitude_velocity;
+
+  // GPS altitude correction (very slow complementary filter)
+  // If GPS has a valid fix, gradually pull barometer toward GPS altitude
+  // This corrects long-term barometer drift due to temperature/weather
+  if (gps_data != nullptr && gps_data->fix_valid) {
+    // 0.01% correction per update = ~10 second settling time (slow drift anchor)
+    altitude += 0.0001f * (gps_data->altitude_gps - altitude);
+  }
 }
 
 Angles ComplementaryFilter::getAngles() const {

@@ -26,6 +26,23 @@
 #define ALT_PID_KD 0.1f        // Derivative gain
 
 // ============================================================================
+// Madgwick Filter — Quaternion-Based Sensor Fusion (Phase 2.2)
+// ============================================================================
+//
+// Uncomment to enable Madgwick filter for drift-free yaw using magnetometer
+// When disabled: uses complementary filter (pure gyro yaw drifts)
+// When enabled: magnetometer corrects yaw, no drift
+//
+// Tuning parameter (MADGWICK_BETA):
+//   0.033 = very slow, smooth (heavy gyro reliance, slow mag correction)
+//   0.1   = default, balanced (good for outdoor with stable mag field)
+//   0.5   = fast, responsive (trusts accel/mag more, less gyro)
+//
+// #define USE_MADGWICK          // DISABLED for debugging — yaw tracking issue
+#define MADGWICK_BETA        0.1f    // Gradient descent gain (0.033–0.5 typical)
+#define MADGWICK_SAMPLE_RATE 100.0f  // Hz — must match main loop rate
+
+// ============================================================================
 // MAVLink Telemetry — QGroundControl integration
 // ============================================================================
 //
@@ -44,7 +61,10 @@
 
 // Enable debug output (print every N loop iterations)
 // Only active when MAVLINK_ENABLED is NOT defined
-#define DEBUG_LOG_INTERVAL 300  // Print every 300 loops (~3s at 100 Hz)
+#define DEBUG_LOG_INTERVAL 500  // Print every 500 loops (~5s at 100 Hz)
+
+// Disable GPS NMEA debug output (too verbose)
+#define DISABLE_GPS_DEBUG
 
 // Format string for debug output:
 // "T:1234 | Att: R=0.5 P=1.2 Y=-0.3 | RC: Th=1500 | Motors: 1500 1500 1500 1500"

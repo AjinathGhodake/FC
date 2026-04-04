@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <cmath>
+#include "madgwick_filter.h"
 
 // Struct to hold IMU readings (accelerometer and gyroscope)
 struct IMUData {
@@ -26,18 +27,21 @@ struct Angles {
   float yaw;      // radians
 };
 
+// Forward declare GPSData (defined in gps.h)
+struct GPSData;
+
 // Complementary Filter class for sensor fusion
 class ComplementaryFilter {
 public:
   ComplementaryFilter(float alpha = 0.98f);
 
-  // Update filter with new IMU data and time delta
-  void update(const IMUData& imu_data, float dt);
+  // Update filter with new IMU data, optional GPS data, and time delta
+  void update(const IMUData& imu_data, const GPSData* gps_data, float dt);
 
   // Get current angle estimates
   Angles getAngles() const;
 
-  // Get current altitude estimate (fused barometer + vertical accel)
+  // Get current altitude estimate (fused barometer + vertical accel + optional GPS)
   float getAltitude() const;
 
   // Reset filter state
@@ -48,6 +52,9 @@ private:
   Angles angles;      // Current angle estimates
   float altitude;     // Fused altitude estimate (m)
   float altitude_velocity;  // Vertical velocity from accel integration (m/s)
+
+  // Sensor fusion options
+  MadgwickFilter madgwick;  // Madgwick quaternion-based fusion (for yaw stability)
 
   // Altitude fusion weights
   static constexpr float ALT_BARO_WEIGHT = 0.9f;    // 90% barometer

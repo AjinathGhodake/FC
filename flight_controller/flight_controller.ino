@@ -141,7 +141,11 @@ void setup() {
 #endif
 
   Serial.println("Initialization complete.");
-  Serial.println("Complementary Filter: 98% gyro + 2% accel");
+#ifdef USE_MADGWICK
+  Serial.println("Sensor Fusion: Madgwick filter (gyro + accel + mag → drift-free yaw)");
+#else
+  Serial.println("Sensor Fusion: Complementary filter (98% gyro + 2% accel)");
+#endif
   Serial.println("RC Receiver (CRSF/ELRS) initialized on UART2");
   Serial.println("GPS NEO-6M on UART1 (PA10=RX, PA9=TX)");
   Serial.println("PWM Output (50 Hz) on PA0,PA1,PB0,PB1 (Motors 1-4)");
@@ -691,7 +695,7 @@ void read_compass() {
 // ============================================================================
 
 void update_filter() {
-  filter.update(imu_data, loop_dt);
+  filter.update(imu_data, &gps_data, loop_dt);
 }
 
 // ============================================================================
