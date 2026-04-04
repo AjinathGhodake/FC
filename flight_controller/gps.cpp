@@ -33,12 +33,46 @@ void NEO6M::begin() {
   Serial1.setRx(PA10);
   Serial1.setTx(PA9);
   Serial1.begin(GPS_BAUDRATE);
+
+  delay(500);  // Wait for module to stabilize
+
+  // Configure NMEA output rate (1Hz)
+  // $PMTK220,1000*1F sets update rate to 1Hz
+  Serial1.println("$PMTK220,1000*1F");
+  delay(100);
+
+  // Enable ONLY GGA and RMC sentences (disable others to reduce clutter)
+  // $PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*28
+  // Format: msg_id,GLL,RMC,VTG,GGA,GSA,GSV,...
+  Serial1.println("$PMTK314,0,1,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0*28");
+  delay(100);
+
+  // Warm start: reacquire fix using existing almanac
+  // $PMTK102*31 = warm start (safe, uses saved almanac)
+  Serial1.println("$PMTK102*31");
+  delay(500);
+
+  Serial.println("[GPS] NEO-6M initialized (warm start + NMEA configured)");
 }
 
 void NEO6M::update() {
   // Check fix timeout
   if (data.fix_valid && (millis() - data.last_fix_time) > GPS_FIX_TIMEOUT) {
     data.fix_valid = false;
+  }
+
+  // Diagnostic: print satellite status every 5 seconds
+  static unsigned long last_diagnostic = 0;
+  if (millis() - last_diagnostic >= 5000) {
+    Serial.print("[GPS_DEBUG] Sats: ");
+    Serial.print(data.satellites);
+    Serial.print(" | Fix: ");
+    Serial.print(data.fix_valid ? "YES" : "NO");
+    Serial.print(" | Bytes: ");
+    Serial.print(bytes_received);
+    Serial.print(" | Sentences: ");
+    Serial.println(sentences_parsed);
+    last_diagnostic = millis();
   }
 
   // Read all available bytes from UART1
@@ -151,6 +185,11 @@ void NEO6M::process_sentence() {
     parse_gga(fields, field_count);
   } else if (strncmp(fields[0], "$GPRMC", 6) == 0 || strncmp(fields[0], "$GNRMC", 6) == 0) {
     parse_rmc(fields, field_count);
+  } else if (strncmp(fields[0], "$GPGSV", 6) == 0 || strncmp(fields[0], "$GNGSV", 6) == 0) {
+    // Parse satellite view: extract number of satellites in view (field 3)
+    if (field_count >= 4) {
+      data.satellites = (uint8_t)atoi(fields[3]);
+    }
   }
 }
 

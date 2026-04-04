@@ -64,7 +64,7 @@
 #define DEBUG_LOG_INTERVAL 500  // Print every 500 loops (~5s at 100 Hz)
 
 // Disable GPS NMEA debug output (too verbose)
-#define DISABLE_GPS_DEBUG
+// #define DISABLE_GPS_DEBUG    // COMMENT OUT to see raw NMEA sentences for debugging
 
 // Format string for debug output:
 // "T:1234 | Att: R=0.5 P=1.2 Y=-0.3 | RC: Th=1500 | Motors: 1500 1500 1500 1500"
