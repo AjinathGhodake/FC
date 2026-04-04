@@ -24,8 +24,10 @@ float PIDController::update(float desired, float actual, float dt) {
 
   // Integral term with anti-windup (clamp integral before accumulation)
   integral += error * dt;
-  // Clamp integral to prevent windup
-  integral = std::clamp(integral, output_min / ki, output_max / ki);
+  // Clamp integral to prevent windup (only if ki != 0 to avoid division by zero)
+  if (ki != 0.0f) {
+    integral = std::clamp(integral, output_min / ki, output_max / ki);
+  }
   float i_term = ki * integral;
 
   // Derivative term

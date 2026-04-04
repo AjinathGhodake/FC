@@ -13,6 +13,12 @@
 #define RATE_PID_KI 0.02f      // Integral gain (anti-windup)
 #define RATE_PID_KD 0.0f       // Derivative gain (can cause noise)
 
+// Yaw Rate PID - Separate tuning for yaw axis (typically higher Kp than roll/pitch)
+// Yaw axis has less inertia and more aerodynamic damping than roll/pitch
+#define RATE_YAW_KP 0.05f      // Proportional gain (higher than roll/pitch)
+#define RATE_YAW_KI 0.02f      // Integral gain
+#define RATE_YAW_KD 0.0f       // Derivative gain (disabled)
+
 // Attitude PID Controller - Outer loop (accelerometer feedback)
 // Converts desired angles to desired rates for rate controller
 #define ATT_PID_KP 4.5f        // Proportional gain (reduce if oscillating)

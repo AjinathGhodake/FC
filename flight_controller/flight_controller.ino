@@ -159,16 +159,17 @@ void setup() {
 // ============================================================================
 
 void loop() {
-  // Wait for next loop iteration to maintain 100 Hz rate
+  // Calculate actual dt from previous iteration (before rate-limiting delay)
   unsigned long current_time = millis();
-  unsigned long elapsed = current_time - last_loop_time;
+  loop_dt = (current_time - last_loop_time) / 1000.0f;
+  last_loop_time = current_time;
+
+  // Wait for next loop iteration to maintain 100 Hz rate
+  unsigned long elapsed = millis() - current_time;
 
   if (elapsed < LOOP_TIME_MS) {
     delay(LOOP_TIME_MS - elapsed);
   }
-
-  last_loop_time = millis();
-  loop_dt = (millis() - current_time) / 1000.0f;  // Actual dt
 
   // Read sensor data
   read_mpu6050();
@@ -407,8 +408,8 @@ void setup_pid_controllers() {
 
   // Rate PID Controller (inner loop - gyro stabilization)
   rate_pid.setGains(
-    RATE_PID_KP, RATE_PID_KI, RATE_PID_KD,  // Roll/Pitch gains
-    RATE_PID_KP, RATE_PID_KI, RATE_PID_KD   // Yaw gains
+    RATE_PID_KP, RATE_PID_KI, RATE_PID_KD,     // Roll/Pitch gains
+    RATE_YAW_KP, RATE_YAW_KI, RATE_YAW_KD      // Yaw gains (separate tuning)
   );
 
   // Attitude PID Controller (outer loop - angle control)
@@ -418,12 +419,19 @@ void setup_pid_controllers() {
   altitude_ctrl.setGains(ALT_PID_KP, ALT_PID_KI, ALT_PID_KD);
 
   Serial.println("PID Gains Loaded:");
-  Serial.print("  Rate PID: Kp=");
+  Serial.print("  Rate PID (Roll/Pitch): Kp=");
   Serial.print(RATE_PID_KP);
   Serial.print(" Ki=");
   Serial.print(RATE_PID_KI);
   Serial.print(" Kd=");
   Serial.println(RATE_PID_KD);
+
+  Serial.print("  Rate PID (Yaw): Kp=");
+  Serial.print(RATE_YAW_KP);
+  Serial.print(" Ki=");
+  Serial.print(RATE_YAW_KI);
+  Serial.print(" Kd=");
+  Serial.println(RATE_YAW_KD);
 
   Serial.print("  Attitude PID: Kp=");
   Serial.print(ATT_PID_KP);
@@ -865,13 +873,13 @@ void update_motor_mixer() {
 
   // Mix motors with:
   // - throttle: from RC stick
-  // - roll/pitch/yaw: from rate PID corrections (in -100..+100 range)
+  // - roll/pitch/yaw: from rate PID corrections (already in -100..+100 range)
   // - altitude_trim: from altitude controller
   motor_output = motor_mixer.mix(
     throttle_percent,
-    rate_output.roll * 100.0f / 3.0f,      // Convert rad/s to -100..+100 (-3 rad/s = -100)
-    rate_output.pitch * 100.0f / 3.0f,     // Convert rad/s to -100..+100 (-3 rad/s = -100)
-    rate_output.yaw * 100.0f / 3.0f,       // Convert rad/s to -100..+100 (-3 rad/s = -100)
+    rate_output.roll,
+    rate_output.pitch,
+    rate_output.yaw,
     throttle_adjustment
   );
 
