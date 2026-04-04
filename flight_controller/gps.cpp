@@ -61,7 +61,9 @@ void NEO6M::update() {
     data.fix_valid = false;
   }
 
-  // Diagnostic: print satellite status every 5 seconds
+  // Diagnostic: disabled for clean output
+  // Uncomment below to debug GPS parsing issues
+  /*
   static unsigned long last_diagnostic = 0;
   if (millis() - last_diagnostic >= 5000) {
     Serial.print("[GPS_DEBUG] Sats: ");
@@ -74,6 +76,7 @@ void NEO6M::update() {
     Serial.println(sentences_parsed);
     last_diagnostic = millis();
   }
+  */
 
   // Read all available bytes from UART1
   while (Serial1.available()) {

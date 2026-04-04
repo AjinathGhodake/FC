@@ -63,8 +63,8 @@
 // Only active when MAVLINK_ENABLED is NOT defined
 #define DEBUG_LOG_INTERVAL 500  // Print every 500 loops (~5s at 100 Hz)
 
-// Disable GPS NMEA debug output (too verbose)
-// #define DISABLE_GPS_DEBUG    // COMMENT OUT to see raw NMEA sentences for debugging
+// Disable GPS debug output for clean serial output
+#define DISABLE_GPS_DEBUG    // Comment out to see raw NMEA + GPS status lines
 
 // Format string for debug output:
 // "T:1234 | Att: R=0.5 P=1.2 Y=-0.3 | RC: Th=1500 | Motors: 1500 1500 1500 1500"
