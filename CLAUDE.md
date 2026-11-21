@@ -1,6 +1,6 @@
 # STM32 Flight Controller
 
-Custom quadcopter flight controller written from scratch for Aj's S500, on an STM32F411 Black Pill with MPU-6050, BMP280, QMC5883P compass, NEO-6M GPS and an ExpressLRS receiver.
+In-progress custom quadcopter flight controller for Aj's S500 (not finished; the drone flies on its Pixhawk 2.4.8), on an STM32F411 Black Pill with MPU-6050, BMP280, QMC5883P compass, NEO-6M GPS and an ExpressLRS receiver.
 
 Code, pin map and architecture are in `README.md`. Sibling project: `~/workspace/IOT/esp32` (ESP32-S3 companion that can bridge this controller's MAVLink to QGroundControl over Wi-Fi). Moved here from `~/development/python/POC/` on 2026-11-22; remote `git@personal.github.com:AjinathGhodake/FC.git`.
 
